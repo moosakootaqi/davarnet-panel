@@ -1,0 +1,256 @@
+let me = null;
+let meta = { domain: '', wsPath: '' };
+
+// ---------- toast ----------
+function toast(msg, type = 'success') {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity 0.3s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+  }, 2600);
+}
+
+// ---------- api helper ----------
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'خطای ناشناخته');
+  return data;
+}
+
+// ---------- link builder ----------
+function buildLink(client) {
+  const domain = meta.domain;
+  const wsPath = encodeURIComponent(meta.wsPath || '/');
+  return `vless://${client.uuid}@${domain}:443?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=${wsPath}#${encodeURIComponent(client.name)}`;
+}
+
+// ---------- view switching ----------
+function showLogin() {
+  document.getElementById('loginView').classList.remove('hidden');
+  document.getElementById('appView').classList.add('hidden');
+}
+function showApp() {
+  document.getElementById('loginView').classList.add('hidden');
+  document.getElementById('appView').classList.remove('hidden');
+}
+
+// ---------- login ----------
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errorEl = document.getElementById('loginError');
+  errorEl.textContent = '';
+  try {
+    me = await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+    await afterLogin();
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await api('/api/logout', { method: 'POST' });
+  me = null;
+  showLogin();
+});
+
+async function afterLogin() {
+  document.getElementById('whoami').textContent = `${me.username} ${me.role === 'admin' ? '(ادمین)' : ''}`;
+  document.getElementById('tabs').classList.toggle('hidden', me.role !== 'admin');
+  meta = await api('/api/meta');
+  showApp();
+  await loadClients();
+  if (me.role === 'admin') await loadUsers();
+}
+
+// ---------- tabs ----------
+document.querySelectorAll('.tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    document.getElementById('clientsTab').classList.toggle('hidden', tab !== 'clients');
+    document.getElementById('usersTab').classList.toggle('hidden', tab !== 'users');
+  });
+});
+
+// ---------- clients ----------
+async function loadClients() {
+  const clients = await api('/api/clients');
+  const list = document.getElementById('clientsList');
+
+  if (!meta.domain) {
+    list.innerHTML = '<div class="empty-state">⚠️ دامنه اینباند هنوز تنظیم نشده (INBOUND_DOMAIN)</div>';
+  } else {
+    list.innerHTML = '';
+  }
+
+  if (clients.length === 0) {
+    list.innerHTML += '<div class="empty-state">هنوز کانفیگی ساخته نشده. یکی بساز 👆</div>';
+    return;
+  }
+
+  window._clients = clients;
+
+  clients.forEach((c) => {
+    const card = document.createElement('div');
+    card.className = 'glass-card client-card';
+    card.innerHTML = `
+      <div class="client-top">
+        <div>
+          <div class="client-name">${escapeHtml(c.name)}</div>
+          ${me.role === 'admin' ? `<div class="client-owner">مالک: ${escapeHtml(c.owner)}</div>` : ''}
+        </div>
+        <div class="client-date">${new Date(c.createdAt).toLocaleDateString('fa-IR')}</div>
+      </div>
+      ${c.note ? `<div class="client-note">${escapeHtml(c.note)}</div>` : ''}
+      <div class="client-link">${meta.domain ? buildLink(c) : '—'}</div>
+      <div class="client-actions">
+        <button class="btn ghost small" data-action="copy" data-id="${c.id}">کپی لینک</button>
+        <button class="btn ghost small" data-action="qr" data-id="${c.id}">نمایش QR</button>
+        <button class="btn danger small" data-action="delete" data-id="${c.id}">حذف</button>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+
+  list.querySelectorAll('button[data-action]').forEach((btn) => {
+    btn.addEventListener('click', () => handleClientAction(btn.dataset.action, btn.dataset.id));
+  });
+}
+
+function handleClientAction(action, id) {
+  const client = window._clients.find((c) => c.id === id);
+  if (!client) return;
+  if (action === 'copy') {
+    navigator.clipboard.writeText(buildLink(client));
+    toast('لینک کپی شد ✅');
+  } else if (action === 'qr') {
+    openQrModal(client);
+  } else if (action === 'delete') {
+    deleteClient(id);
+  }
+}
+
+async function deleteClient(id) {
+  if (!confirm('این کانفیگ حذف بشه؟')) return;
+  try {
+    await api('/api/clients/' + id, { method: 'DELETE' });
+    toast('حذف شد', 'success');
+    await loadClients();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+document.getElementById('addClientBtn').addEventListener('click', async () => {
+  const nameEl = document.getElementById('newClientName');
+  const noteEl = document.getElementById('newClientNote');
+  const name = nameEl.value.trim();
+  if (!name) return toast('اسم کانفیگ رو وارد کن', 'error');
+  try {
+    await api('/api/clients', { method: 'POST', body: JSON.stringify({ name, note: noteEl.value.trim() }) });
+    nameEl.value = '';
+    noteEl.value = '';
+    toast('کانفیگ ساخته شد 🎉');
+    await loadClients();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+// ---------- users (admin only) ----------
+async function loadUsers() {
+  const users = await api('/api/users');
+  const list = document.getElementById('usersList');
+  list.innerHTML = '';
+  users.forEach((u) => {
+    const card = document.createElement('div');
+    card.className = 'glass-card client-card';
+    card.innerHTML = `
+      <div class="client-top">
+        <div class="client-name">${escapeHtml(u.username)} ${u.role === 'admin' ? '👑' : ''}</div>
+        <div class="client-date">${new Date(u.createdAt).toLocaleDateString('fa-IR')}</div>
+      </div>
+      <div class="client-actions">
+        ${u.role !== 'admin' ? `<button class="btn danger small" data-user="${u.username}">حذف کاربر</button>` : ''}
+      </div>
+    `;
+    list.appendChild(card);
+  });
+  list.querySelectorAll('button[data-user]').forEach((btn) => {
+    btn.addEventListener('click', () => deleteUser(btn.dataset.user));
+  });
+}
+
+async function deleteUser(username) {
+  if (!confirm(`کاربر "${username}" و همه کانفیگ‌هاش حذف بشه؟`)) return;
+  try {
+    await api('/api/users/' + username, { method: 'DELETE' });
+    toast('کاربر حذف شد');
+    await loadUsers();
+    await loadClients();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+document.getElementById('addUserBtn').addEventListener('click', async () => {
+  const nameEl = document.getElementById('newUserName');
+  const passEl = document.getElementById('newUserPass');
+  const username = nameEl.value.trim();
+  const password = passEl.value;
+  if (!username || !password) return toast('نام کاربری و رمز عبور رو وارد کن', 'error');
+  try {
+    await api('/api/users', { method: 'POST', body: JSON.stringify({ username, password }) });
+    nameEl.value = '';
+    passEl.value = '';
+    toast('کاربر ساخته شد 🎉');
+    await loadUsers();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+// ---------- QR modal ----------
+function openQrModal(client) {
+  const modal = document.getElementById('qrModal');
+  const body = document.getElementById('qrModalBody');
+  document.getElementById('qrModalTitle').textContent = client.name;
+  body.innerHTML = '';
+  new QRCode(body, { text: buildLink(client), width: 220, height: 220, colorDark: '#0b0e1a', colorLight: '#ffffff' });
+  modal.classList.remove('hidden');
+}
+document.getElementById('qrModalClose').addEventListener('click', () => {
+  document.getElementById('qrModal').classList.add('hidden');
+});
+document.getElementById('qrModal').addEventListener('click', (e) => {
+  if (e.target.id === 'qrModal') document.getElementById('qrModal').classList.add('hidden');
+});
+
+// ---------- utils ----------
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+// ---------- init ----------
+(async () => {
+  try {
+    me = await api('/api/me');
+    await afterLogin();
+  } catch (err) {
+    showLogin();
+  }
+})();
