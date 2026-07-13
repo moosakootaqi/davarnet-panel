@@ -16,6 +16,49 @@
   --radius: 16px;
 }
 
+[data-theme="light"] {
+  --bg-1: #eef0fb;
+  --bg-2: #f7f8fd;
+  --accent: #6366f1;
+  --accent-2: #8b5cf6;
+  --accent-glow: rgba(99, 102, 241, 0.22);
+  --text: #1c1f33;
+  --text-muted: #5b6180;
+  --danger: #e11d48;
+  --success: #16a34a;
+  --warning: #d97706;
+  --card-bg: rgba(255, 255, 255, 0.65);
+  --card-border: rgba(30, 30, 60, 0.08);
+}
+
+[data-theme="light"] body {
+  background: linear-gradient(160deg, var(--bg-1), var(--bg-2) 60%, #e7e9fb);
+}
+
+[data-theme="light"] .client-link {
+  background: rgba(0,0,0,0.04);
+  color: #4338ca;
+}
+
+[data-theme="light"] .toast {
+  background: rgba(255,255,255,0.95);
+}
+
+[data-theme="light"] .modal-overlay {
+  background: rgba(200, 200, 220, 0.5);
+}
+
+.theme-toggle {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  width: 36px; height: 36px; border-radius: 10px;
+  cursor: pointer; font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s;
+}
+.theme-toggle:hover { background: rgba(255,255,255,0.12); }
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -23,6 +66,7 @@ body {
   background: linear-gradient(160deg, var(--bg-1), var(--bg-2) 60%, #1a1030);
   color: var(--text);
   overflow-x: hidden;
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
 .bg-orbs { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
