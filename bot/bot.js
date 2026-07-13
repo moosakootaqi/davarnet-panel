@@ -8,6 +8,7 @@ const DATA_DIR = process.env.DATA_DIR || '/botdata';
 
 const fs = require('fs');
 const path = require('path');
+const tls = require('tls');
 
 if (!BOT_TOKEN) { console.error('BOT_TOKEN env var is required'); process.exit(1); }
 if (!PANEL_URL) { console.error('PANEL_URL env var is required'); process.exit(1); }
@@ -90,6 +91,7 @@ function loggedInKeyboard(isAdmin) {
   const rows = [
     [{ text: '📋 کانفیگ‌های من' }, { text: '➕ کانفیگ جدید' }],
     [{ text: '👤 حساب من' }, { text: 'ℹ️ راهنما' }],
+    [{ text: '📥 دانلود اپ' }, { text: '📶 تست سرعت' }],
   ];
   if (isAdmin) rows.push([{ text: '👑 مدیریت کاربران' }]);
   rows.push([{ text: '🚪 خروج' }]);
@@ -237,6 +239,78 @@ async function adminDeleteUserPrompt(chatId) {
   }
 }
 
+function tcpPing(host, port = 443, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let done = false;
+    const socket = tls.connect({ host, port, servername: host, rejectUnauthorized: false, timeout: timeoutMs }, () => {
+      if (done) return;
+      done = true;
+      const ms = Date.now() - start;
+      socket.end();
+      resolve(ms);
+    });
+    socket.on('error', () => { if (!done) { done = true; resolve(null); } });
+    socket.on('timeout', () => { if (!done) { done = true; socket.destroy(); resolve(null); } });
+  });
+}
+
+async function showDownloadLinks(chatId) {
+  const text = `📥 <b>دانلود اپلیکیشن کلاینت</b>
+
+<b>اندروید:</b>
+v2rayNG (رایگان، متن‌باز)
+https://play.google.com/store/apps/details?id=com.v2ray.ang
+یا از گیت‌هاب: https://github.com/2dust/v2rayNG/releases
+
+<b>iOS:</b>
+Streisand (رایگان)
+https://apps.apple.com/app/streisand/id6450534064
+
+<b>ویندوز:</b>
+v2rayN
+https://github.com/2dust/v2rayN/releases
+
+<b>راهنمای وصل شدن:</b>
+۱. اپ رو نصب کن
+۲. از پنل یا همین بات، لینک کانفیگتو کپی کن
+۳. تو اپ، گزینه Import from Clipboard (یا "+") رو بزن
+۴. وصل شو ✅`;
+  await send(chatId, text);
+}
+
+async function showSpeedTest(chatId) {
+  await send(chatId, '⏳ در حال بررسی وضعیت سرور...');
+  try {
+    const start = Date.now();
+    await panel('/bot/health');
+    const panelMs = Date.now() - start;
+
+    const metaData = await panel('/bot/meta');
+    let tunnelMs = null;
+    if (metaData.domain) {
+      tunnelMs = await tcpPing(metaData.domain, 443);
+    }
+
+    function verdict(ms) {
+      if (ms === null) return '❌ در دسترس نیست';
+      if (ms < 150) return `${ms}ms 🟢 عالی`;
+      if (ms < 400) return `${ms}ms 🟡 خوب`;
+      return `${ms}ms 🔴 ضعیف`;
+    }
+
+    const text = `📶 <b>وضعیت سرور</b>
+
+پنل: ${verdict(panelMs)}
+اتصال VPN: ${verdict(tunnelMs)}
+
+⚠️ این عدد فقط سلامت سرور رو نشون میده، نه سرعت اینترنت شخصی خودت (که به مسیر بین تو و سرور بستگی داره).`;
+    await send(chatId, text);
+  } catch (e) {
+    await send(chatId, '❌ خطا در بررسی: ' + e.message);
+  }
+}
+
 // ---------- message handler ----------
 async function handleMessage(msg) {
   const chatId = msg.chat.id;
@@ -296,6 +370,8 @@ async function handleMessage(msg) {
   if (text === '📋 کانفیگ‌های من') return listConfigs(chatId);
   if (text === '➕ کانفیگ جدید') return startNewConfig(chatId);
   if (text === '👤 حساب من') return showProfile(chatId);
+  if (text === '📥 دانلود اپ') return showDownloadLinks(chatId);
+  if (text === '📶 تست سرعت') return showSpeedTest(chatId);
   if (text === 'ℹ️ راهنما') {
     return send(chatId, 'از دکمه‌های پایین صفحه استفاده کن:\n📋 دیدن کانفیگ‌ها\n➕ ساخت کانفیگ جدید\n👤 اطلاعات حساب\n🚪 خروج از حساب');
   }
