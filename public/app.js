@@ -1,6 +1,25 @@
 let me = null;
 let meta = { domain: '', wsPath: '', maxConfigs: 0 };
 
+// ---------- theme ----------
+function applyThemeIcon() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.textContent = isLight ? '☀️' : '🌙';
+}
+document.getElementById('themeToggle').addEventListener('click', () => {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('davarnet-theme', 'dark');
+  } else {
+    document.documentElement.setAttribute('data-theme', 'light');
+    localStorage.setItem('davarnet-theme', 'light');
+  }
+  applyThemeIcon();
+});
+applyThemeIcon();
+
 function toast(msg, type = 'success') {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
