@@ -345,6 +345,85 @@ app.delete('/bot/clients/:id', requireBotSecret, (req, res) => {
   res.json(result);
 });
 
+// rename and/or extend an existing config
+app.patch('/bot/clients/:id', requireBotSecret, (req, res) => {
+  const { username, name, addDays } = req.body || {};
+  const clients = loadClients();
+  const target = clients.find((c) => c.id === req.params.id);
+  if (!target) return res.status(404).json({ error: 'not found' });
+  if (target.owner !== username) return res.status(403).json({ error: 'forbidden' });
+  if (name) target.name = String(name).trim().slice(0, 60) || target.name;
+  if (addDays) {
+    const base = target.expiresAt && new Date(target.expiresAt).getTime() > Date.now()
+      ? new Date(target.expiresAt).getTime()
+      : Date.now();
+    target.expiresAt = new Date(base + Number(addDays) * 24 * 60 * 60 * 1000).toISOString();
+  }
+  saveClients(clients);
+  applyConfig();
+  res.json({ ...target, expired: isExpired(target), link: buildLinkFor(target) });
+});
+
+// profile summary for the "حساب من" button
+app.get('/bot/profile', requireBotSecret, (req, res) => {
+  const username = req.query.username;
+  const users = loadUsers();
+  const user = users.find((u) => u.username === username);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  const mine = loadClients().filter((c) => c.owner === username);
+  const traffic = getTrafficStats();
+  const totalTraffic = mine.reduce((sum, c) => sum + (traffic[c.id] ? traffic[c.id].uplink + traffic[c.id].downlink : 0), 0);
+  res.json({
+    username: user.username,
+    role: user.role,
+    activeConfigs: mine.filter((c) => !isExpired(c)).length,
+    totalConfigs: mine.length,
+    totalTraffic,
+    maxConfigs: MAX_CONFIGS_PER_USER,
+  });
+});
+
+// configs expiring within N days system-wide, used by the bot's reminder job
+app.get('/bot/admin/expiring', requireBotSecret, (req, res) => {
+  const withinDays = parseInt(req.query.withinDays || '2', 10);
+  const cutoff = Date.now() + withinDays * 24 * 60 * 60 * 1000;
+  const clients = loadClients().filter((c) => c.expiresAt && !isExpired(c) && new Date(c.expiresAt).getTime() <= cutoff);
+  res.json(clients.map((c) => ({ id: c.id, name: c.name, owner: c.owner, expiresAt: c.expiresAt })));
+});
+
+// ===== bot admin routes (require the acting user to actually be an admin) =====
+function requireActingAdmin(req, res, next) {
+  const actingUsername = req.body.actingUsername || req.query.actingUsername;
+  const users = loadUsers();
+  const user = users.find((u) => u.username === actingUsername);
+  if (!user || user.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+  next();
+}
+app.get('/bot/admin/users', requireBotSecret, requireActingAdmin, (req, res) => {
+  res.json(loadUsers().map((u) => ({ username: u.username, role: u.role, createdAt: u.createdAt })));
+});
+app.post('/bot/admin/users', requireBotSecret, requireActingAdmin, (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'نام کاربری و رمز عبور الزامی است' });
+  const users = loadUsers();
+  if (users.find((u) => u.username === username)) return res.status(409).json({ error: 'این نام کاربری قبلاً وجود دارد' });
+  users.push({ username, password: hashPassword(password), role: 'user', createdAt: new Date().toISOString() });
+  saveUsers(users);
+  res.json({ ok: true });
+});
+app.delete('/bot/admin/users/:username', requireBotSecret, requireActingAdmin, (req, res) => {
+  const target = req.params.username;
+  if (target === ADMIN_USER) return res.status(400).json({ error: 'نمی‌توان ادمین را حذف کرد' });
+  let users = loadUsers();
+  users = users.filter((u) => u.username !== target);
+  saveUsers(users);
+  let clients = loadClients();
+  clients = clients.filter((c) => c.owner !== target);
+  saveClients(clients);
+  applyConfig();
+  res.json({ ok: true });
+});
+
 // ===== static pages =====
 // "/" = public landing page. "/panel" = the actual login + dashboard app.
 app.use(express.static(path.join(__dirname, 'public'), { index: 'landing.html' }));
