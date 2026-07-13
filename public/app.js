@@ -1,7 +1,6 @@
 let me = null;
-let meta = { domain: '', wsPath: '' };
+let meta = { domain: '', wsPath: '', maxConfigs: 0 };
 
-// ---------- toast ----------
 function toast(msg, type = 'success') {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
@@ -15,25 +14,32 @@ function toast(msg, type = 'success') {
   }, 2600);
 }
 
-// ---------- api helper ----------
 async function api(path, options = {}) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'خطای ناشناخته');
   return data;
 }
 
-// ---------- link builder ----------
 function buildLink(client) {
   const domain = meta.domain;
   const wsPath = encodeURIComponent(meta.wsPath || '/');
   return `vless://${client.uuid}@${domain}:443?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=${wsPath}#${encodeURIComponent(client.name)}`;
 }
 
-// ---------- view switching ----------
+function formatBytes(bytes) {
+  if (!bytes) return '۰ مگابایت';
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return `${mb.toFixed(1)} مگابایت`;
+  return `${(mb / 1024).toFixed(2)} گیگابایت`;
+}
+
+function daysLeft(expiresAt) {
+  if (!expiresAt) return null;
+  const diff = new Date(expiresAt).getTime() - Date.now();
+  return Math.ceil(diff / (24 * 60 * 60 * 1000));
+}
+
 function showLogin() {
   document.getElementById('loginView').classList.remove('hidden');
   document.getElementById('appView').classList.add('hidden');
@@ -43,7 +49,6 @@ function showApp() {
   document.getElementById('appView').classList.remove('hidden');
 }
 
-// ---------- login ----------
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const username = document.getElementById('loginUsername').value.trim();
@@ -69,11 +74,20 @@ async function afterLogin() {
   document.getElementById('tabs').classList.toggle('hidden', me.role !== 'admin');
   meta = await api('/api/meta');
   showApp();
+  updateLimitInfo();
   await loadClients();
   if (me.role === 'admin') await loadUsers();
 }
 
-// ---------- tabs ----------
+function updateLimitInfo() {
+  const el = document.getElementById('limitInfo');
+  if (me.role === 'admin' || !meta.maxConfigs) {
+    el.textContent = '';
+    return;
+  }
+  el.textContent = `حداکثر ${meta.maxConfigs} کانفیگ فعال مجاز است`;
+}
+
 document.querySelectorAll('.tab-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -84,16 +98,11 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
   });
 });
 
-// ---------- clients ----------
 async function loadClients() {
   const clients = await api('/api/clients');
   const list = document.getElementById('clientsList');
 
-  if (!meta.domain) {
-    list.innerHTML = '<div class="empty-state">⚠️ دامنه اینباند هنوز تنظیم نشده (INBOUND_DOMAIN)</div>';
-  } else {
-    list.innerHTML = '';
-  }
+  list.innerHTML = !meta.domain ? '<div class="empty-state">⚠️ دامنه اینباند هنوز تنظیم نشده (INBOUND_DOMAIN)</div>' : '';
 
   if (clients.length === 0) {
     list.innerHTML += '<div class="empty-state">هنوز کانفیگی ساخته نشده. یکی بساز 👆</div>';
@@ -103,17 +112,26 @@ async function loadClients() {
   window._clients = clients;
 
   clients.forEach((c) => {
+    const left = daysLeft(c.expiresAt);
+    let badge = '';
+    if (c.expired) badge = '<span class="badge expired">منقضی شده</span>';
+    else if (left !== null && left <= 3) badge = `<span class="badge expiring">${left} روز مانده</span>`;
+
     const card = document.createElement('div');
-    card.className = 'glass-card client-card';
+    card.className = 'glass-card client-card' + (c.expired ? ' is-expired' : '');
     card.innerHTML = `
       <div class="client-top">
         <div>
-          <div class="client-name">${escapeHtml(c.name)}</div>
+          <div class="client-name">${escapeHtml(c.name)} ${badge}</div>
           ${me.role === 'admin' ? `<div class="client-owner">مالک: ${escapeHtml(c.owner)}</div>` : ''}
         </div>
         <div class="client-date">${new Date(c.createdAt).toLocaleDateString('fa-IR')}</div>
       </div>
       ${c.note ? `<div class="client-note">${escapeHtml(c.note)}</div>` : ''}
+      <div class="traffic-row">
+        <span>مصرف: ${formatBytes(c.traffic)}</span>
+        <div class="traffic-bar"><div class="traffic-bar-fill" style="width:${Math.min(100, (c.traffic / (1024*1024*1024)) * 20)}%"></div></div>
+      </div>
       <div class="client-link">${meta.domain ? buildLink(c) : '—'}</div>
       <div class="client-actions">
         <button class="btn ghost small" data-action="copy" data-id="${c.id}">کپی لینک</button>
@@ -146,7 +164,7 @@ async function deleteClient(id) {
   if (!confirm('این کانفیگ حذف بشه؟')) return;
   try {
     await api('/api/clients/' + id, { method: 'DELETE' });
-    toast('حذف شد', 'success');
+    toast('حذف شد');
     await loadClients();
   } catch (err) {
     toast(err.message, 'error');
@@ -156,12 +174,17 @@ async function deleteClient(id) {
 document.getElementById('addClientBtn').addEventListener('click', async () => {
   const nameEl = document.getElementById('newClientName');
   const noteEl = document.getElementById('newClientNote');
+  const expiryEl = document.getElementById('newClientExpiry');
   const name = nameEl.value.trim();
   if (!name) return toast('اسم کانفیگ رو وارد کن', 'error');
   try {
-    await api('/api/clients', { method: 'POST', body: JSON.stringify({ name, note: noteEl.value.trim() }) });
+    await api('/api/clients', {
+      method: 'POST',
+      body: JSON.stringify({ name, note: noteEl.value.trim(), expiryDays: expiryEl.value ? Number(expiryEl.value) : null }),
+    });
     nameEl.value = '';
     noteEl.value = '';
+    expiryEl.value = '';
     toast('کانفیگ ساخته شد 🎉');
     await loadClients();
   } catch (err) {
@@ -169,7 +192,6 @@ document.getElementById('addClientBtn').addEventListener('click', async () => {
   }
 });
 
-// ---------- users (admin only) ----------
 async function loadUsers() {
   const users = await api('/api/users');
   const list = document.getElementById('usersList');
@@ -222,7 +244,6 @@ document.getElementById('addUserBtn').addEventListener('click', async () => {
   }
 });
 
-// ---------- QR modal ----------
 function openQrModal(client) {
   const modal = document.getElementById('qrModal');
   const body = document.getElementById('qrModalBody');
@@ -238,14 +259,12 @@ document.getElementById('qrModal').addEventListener('click', (e) => {
   if (e.target.id === 'qrModal') document.getElementById('qrModal').classList.add('hidden');
 });
 
-// ---------- utils ----------
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
 }
 
-// ---------- init ----------
 (async () => {
   try {
     me = await api('/api/me');
