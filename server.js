@@ -323,6 +323,9 @@ app.post('/bot/login', requireBotSecret, (req, res) => {
 app.get('/bot/meta', requireBotSecret, (req, res) => {
   res.json({ domain: PUBLIC_DOMAIN, wsPath: WS_PATH, maxConfigs: MAX_CONFIGS_PER_USER });
 });
+app.get('/bot/health', requireBotSecret, (req, res) => {
+  res.json({ ok: true, ts: Date.now() });
+});
 app.get('/bot/clients', requireBotSecret, (req, res) => {
   const username = req.query.username;
   if (!username) return res.status(400).json({ error: 'username required' });
