@@ -1,384 +1,284 @@
+// Telegram bot for Davarnet - button-based UI (reply keyboard + inline keyboards)
+// Uses Node's built-in fetch, long polling, no extra deps.
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const PANEL_URL = (process.env.PANEL_URL || '').replace(/\/$/, '');
+const BOT_SECRET = process.env.BOT_SECRET || '';
+const DATA_DIR = process.env.DATA_DIR || '/botdata';
+
 const fs = require('fs');
 const path = require('path');
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const PANEL_URL = process.env.PANEL_URL;
-const BOT_SECRET = process.env.BOT_SECRET;
+if (!BOT_TOKEN) { console.error('BOT_TOKEN env var is required'); process.exit(1); }
+if (!PANEL_URL) { console.error('PANEL_URL env var is required'); process.exit(1); }
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-if (!BOT_TOKEN || !PANEL_URL || !BOT_SECRET) {
-    console.error('❌ متغیرهای محیطی تنظیم نشده‌اند');
-    process.exit(1);
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+function loadSessions() {
+  if (!fs.existsSync(SESSIONS_FILE)) fs.writeFileSync(SESSIONS_FILE, '{}');
+  return JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8'));
+}
+function saveSessions(s) { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(s, null, 2)); }
+
+const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+
+async function tg(method, params) {
+  const res = await fetch(`${TG_API}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+function send(chatId, text, extra = {}) {
+  return tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', ...extra });
+}
+function answerCallback(id, text) {
+  return tg('answerCallbackQuery', { callback_query_id: id, text: text || '' });
 }
 
-// اگر پروتکل نداشت، اضافه کن
-let API_BASE = PANEL_URL;
-if (!API_BASE.startsWith('http://') && !API_BASE.startsWith('https://')) {
-    API_BASE = 'https://' + API_BASE;
-}
-if (API_BASE.endsWith('/')) API_BASE = API_BASE.slice(0, -1);
-
-const SESSIONS_FILE = path.join(__dirname, '../botdata/sessions.json');
-const SESSIONS_DIR = path.dirname(SESSIONS_FILE);
-if (!fs.existsSync(SESSIONS_DIR)) {
-    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+async function panel(pathName, options = {}) {
+  const res = await fetch(`${PANEL_URL}${pathName}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', 'X-Bot-Secret': BOT_SECRET, ...(options.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'خطای پنل');
+  return data;
 }
 
-// ========== مدیریت نشست‌ها ==========
-let sessions = {};
-if (fs.existsSync(SESSIONS_FILE)) {
-    try {
-        sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-    } catch (e) { sessions = {}; }
+function fmtBytes(bytes) {
+  if (!bytes) return '0MB';
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return `${mb.toFixed(1)}MB`;
+  return `${(mb / 1024).toFixed(2)}GB`;
 }
 
-function saveSessions() {
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+// ---------- keyboards ----------
+function loggedOutKeyboard() {
+  return { keyboard: [[{ text: '🔑 ورود' }]], resize_keyboard: true };
+}
+function loggedInKeyboard() {
+  return {
+    keyboard: [
+      [{ text: '📋 کانفیگ‌های من' }, { text: '➕ کانفیگ جدید' }],
+      [{ text: '🚪 خروج' }],
+    ],
+    resize_keyboard: true,
+  };
+}
+function expiryInlineKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: 'بدون انقضا', callback_data: 'exp:0' },
+        { text: '۷ روز', callback_data: 'exp:7' },
+      ],
+      [
+        { text: '۳۰ روز', callback_data: 'exp:30' },
+        { text: '۹۰ روز', callback_data: 'exp:90' },
+      ],
+    ],
+  };
+}
+function deleteInlineKeyboard(id) {
+  return { inline_keyboard: [[{ text: '🗑 حذف این کانفیگ', callback_data: `delconfirm:${id}` }]] };
+}
+function confirmDeleteKeyboard(id) {
+  return {
+    inline_keyboard: [[
+      { text: '✅ بله، حذف شود', callback_data: `delyes:${id}` },
+      { text: '❌ انصراف', callback_data: 'delno' },
+    ]],
+  };
 }
 
-function getSession(chatId) {
-    return sessions[chatId] || null;
+// ---------- per-chat conversation state (in-memory) ----------
+// pending[chatId] = { type: 'login_username' | 'login_password' | 'new_name' | 'new_expiry', ...data }
+const pending = new Map();
+
+function getUsername(chatId) {
+  const sessions = loadSessions();
+  return sessions[chatId];
+}
+function setUsername(chatId, username) {
+  const sessions = loadSessions();
+  sessions[chatId] = username;
+  saveSessions(sessions);
+}
+function clearUsername(chatId) {
+  const sessions = loadSessions();
+  delete sessions[chatId];
+  saveSessions(sessions);
 }
 
-function setSession(chatId, username) {
-    sessions[chatId] = { username, loggedIn: true };
-    saveSessions();
+async function showMainMenu(chatId, text) {
+  const username = getUsername(chatId);
+  await send(chatId, text, { reply_markup: username ? loggedInKeyboard() : loggedOutKeyboard() });
 }
 
-function clearSession(chatId) {
-    delete sessions[chatId];
-    saveSessions();
+async function startLogin(chatId) {
+  pending.set(chatId, { type: 'login_username' });
+  await send(chatId, '👤 یوزرنیمت رو بفرست:', { reply_markup: { remove_keyboard: true } });
 }
 
-function isLoggedIn(chatId) {
-    return sessions[chatId] && sessions[chatId].loggedIn;
-}
-
-// ========== وضعیت‌های کاربران ==========
-const userStates = {}; // 'idle' | 'awaiting_username' | 'awaiting_password' | 'awaiting_config_name' | 'awaiting_config_days'
-const userTemp = {};
-
-// ========== ارسال درخواست به API پنل ==========
-async function callApi(endpoint, method = 'GET', body = null, chatId = null) {
-    const url = `${API_BASE}${endpoint}`;
-    const headers = {
-        'Content-Type': 'application/json',
-        'X-Bot-Secret': BOT_SECRET,
-    };
-    if (chatId && isLoggedIn(chatId)) {
-        headers['X-Username'] = sessions[chatId].username;
+async function tryLogin(chatId, u, p) {
+  try {
+    const result = await panel('/bot/login', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
+    if (!result.ok) {
+      await send(chatId, '❌ نام کاربری یا رمز عبور اشتباهه.');
+      return startLogin(chatId);
     }
-    const options = { method, headers };
-    if (body) options.body = JSON.stringify(body);
-
-    try {
-        const res = await fetch(url, options);
-        return await res.json();
-    } catch (e) {
-        console.error('API Error:', e.message);
-        return { success: false, message: 'خطا در ارتباط با پنل' };
-    }
+    setUsername(chatId, u);
+    await showMainMenu(chatId, `✅ خوش اومدی <b>${u}</b>! از دکمه‌های پایین استفاده کن.`);
+  } catch (e) {
+    await send(chatId, '❌ خطا در ورود: ' + e.message);
+  }
 }
 
-// ========== توابع تلگرام ==========
-function sendMessage(chatId, text, keyboard = null) {
-    const payload = {
-        chat_id: chatId,
-        text,
-        parse_mode: 'HTML',
-    };
-    if (keyboard) payload.reply_markup = JSON.stringify(keyboard);
-    return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+async function listConfigs(chatId) {
+  const username = getUsername(chatId);
+  try {
+    const clients = await panel(`/bot/clients?username=${encodeURIComponent(username)}`);
+    if (clients.length === 0) {
+      return send(chatId, 'هنوز کانفیگی نساختی. رو «➕ کانفیگ جدید» بزن.');
+    }
+    for (const c of clients) {
+      const status = c.expired ? '❌ منقضی' : '✅ فعال';
+      const text = `<b>${c.name}</b> (${status})\nمصرف: ${fmtBytes(c.traffic)}\n\n${c.link}`;
+      await send(chatId, text, { reply_markup: deleteInlineKeyboard(c.id) });
+    }
+  } catch (e) {
+    await send(chatId, '❌ خطا: ' + e.message);
+  }
+}
+
+async function startNewConfig(chatId) {
+  pending.set(chatId, { type: 'new_name' });
+  await send(chatId, '✏️ اسم این کانفیگ چی باشه؟ (مثلاً "گوشی من")');
+}
+
+async function createConfig(chatId, name, expiryDays) {
+  const username = getUsername(chatId);
+  try {
+    const client = await panel('/bot/clients', {
+      method: 'POST',
+      body: JSON.stringify({ username, name, expiryDays: expiryDays || null }),
     });
+    await send(chatId, `🎉 کانفیگ ساخته شد!\n\n${client.link}`, { reply_markup: deleteInlineKeyboard(client.id) });
+    await showMainMenu(chatId, 'کار دیگه‌ای هست؟');
+  } catch (e) {
+    await send(chatId, '❌ خطا: ' + e.message);
+  }
 }
 
-function editMessage(chatId, messageId, text, keyboard = null) {
-    const payload = {
-        chat_id: chatId,
-        message_id: messageId,
-        text,
-        parse_mode: 'HTML',
-    };
-    if (keyboard) payload.reply_markup = JSON.stringify(keyboard);
-    return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-    });
+async function deleteConfig(chatId, id) {
+  const username = getUsername(chatId);
+  try {
+    await panel(`/bot/clients/${encodeURIComponent(id)}?username=${encodeURIComponent(username)}`, { method: 'DELETE' });
+    await send(chatId, '🗑️ حذف شد.');
+  } catch (e) {
+    await send(chatId, '❌ خطا: ' + e.message);
+  }
 }
 
-function answerCallback(callbackId, text, showAlert = false) {
-    return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            callback_query_id: callbackId,
-            text,
-            show_alert: showAlert,
-        }),
-    });
-}
+// ---------- message handler ----------
+async function handleMessage(msg) {
+  const chatId = msg.chat.id;
+  const text = (msg.text || '').trim();
+  if (!text) return;
 
-// ========== صفحه‌کلیدها ==========
-function mainMenu() {
-    return {
-        inline_keyboard: [
-            [{ text: '🔑 ورود', callback_data: 'login' }],
-            [{ text: '📋 لیست کانفیگ‌ها', callback_data: 'list' }],
-            [{ text: '➕ ساخت کانفیگ جدید', callback_data: 'new' }],
-            [{ text: '❌ حذف کانفیگ', callback_data: 'delete' }],
-            [{ text: '🚪 خروج', callback_data: 'logout' }],
-            [{ text: 'ℹ️ راهنما', callback_data: 'help' }],
-        ],
-    };
-}
+  const state = pending.get(chatId);
 
-function backMenu() {
-    return {
-        inline_keyboard: [
-            [{ text: '🔙 بازگشت به منو', callback_data: 'main' }],
-        ],
-    };
-}
-
-// ========== نمایش منوی اصلی ==========
-async function showMainMenu(chatId, messageId = null) {
-    const text = `🤖 <b>ربات مدیریت پنل داوری</b>\n\nلطفاً یکی از گزینه‌ها را انتخاب کنید:`;
-    if (messageId) {
-        await editMessage(chatId, messageId, text, mainMenu());
-    } else {
-        await sendMessage(chatId, text, mainMenu());
+  // mid-conversation replies (typed, not button taps)
+  if (state) {
+    if (state.type === 'login_username') {
+      pending.set(chatId, { type: 'login_password', username: text });
+      return send(chatId, '🔑 حالا رمز عبورت رو بفرست:');
     }
+    if (state.type === 'login_password') {
+      pending.delete(chatId);
+      return tryLogin(chatId, state.username, text);
+    }
+    if (state.type === 'new_name') {
+      pending.set(chatId, { type: 'new_expiry', name: text });
+      return send(chatId, 'مدت اعتبار این کانفیگ چقدر باشه؟', { reply_markup: expiryInlineKeyboard() });
+    }
+  }
+
+  // button taps (reply keyboard sends the button's label as plain text)
+  if (text === '🔑 ورود') return startLogin(chatId);
+  if (text === '📋 کانفیگ‌های من') return listConfigs(chatId);
+  if (text === '➕ کانفیگ جدید') return startNewConfig(chatId);
+  if (text === '🚪 خروج') {
+    clearUsername(chatId);
+    return showMainMenu(chatId, 'خارج شدی.');
+  }
+
+  if (text === '/start' || text === '/help') {
+    return showMainMenu(chatId, 'سلام 👋 به <b>Davarnet</b> خوش اومدی. از دکمه‌های پایین صفحه استفاده کن.');
+  }
+
+  // fallback
+  return showMainMenu(chatId, 'از دکمه‌های پایین استفاده کن 👇');
 }
 
-// ========== مدیریت آپدیت‌ها ==========
-async function handleUpdate(update) {
-    // ------ پیام متنی (برای ادامهٔ مکالمه) ------
-    if (update.message && update.message.text) {
-        const chatId = update.message.chat.id;
-        const text = update.message.text.trim();
+// ---------- callback (inline button) handler ----------
+async function handleCallback(cb) {
+  const chatId = cb.message.chat.id;
+  const data = cb.data;
 
-        if (text === '/start') {
-            userStates[chatId] = 'idle';
-            delete userTemp[chatId];
-            return showMainMenu(chatId);
-        }
+  if (data.startsWith('exp:')) {
+    const days = Number(data.split(':')[1]);
+    const state = pending.get(chatId);
+    pending.delete(chatId);
+    await answerCallback(cb.id);
+    const name = state && state.name ? state.name : 'کانفیگ';
+    return createConfig(chatId, name, days);
+  }
 
-        const state = userStates[chatId] || 'idle';
+  if (data.startsWith('delconfirm:')) {
+    const id = data.split(':')[1];
+    await answerCallback(cb.id);
+    return send(chatId, 'مطمئنی می‌خوای این کانفیگ حذف بشه؟', { reply_markup: confirmDeleteKeyboard(id) });
+  }
 
-        // ورود - مرحلهٔ یوزرنیم
-        if (state === 'awaiting_username') {
-            userStates[chatId] = 'awaiting_password';
-            userTemp[chatId] = { username: text };
-            await sendMessage(chatId, `🔑 حالا رمز عبور را وارد کنید:`, backMenu());
-            return;
-        }
+  if (data.startsWith('delyes:')) {
+    const id = data.split(':')[1];
+    await answerCallback(cb.id, 'در حال حذف...');
+    return deleteConfig(chatId, id);
+  }
 
-        // ورود - مرحلهٔ رمز عبور
-        if (state === 'awaiting_password') {
-            const username = userTemp[chatId]?.username;
-            if (!username) {
-                userStates[chatId] = 'idle';
-                return showMainMenu(chatId);
-            }
-            const password = text;
+  if (data === 'delno') {
+    await answerCallback(cb.id, 'لغو شد');
+    return send(chatId, 'باشه، حذف نشد.');
+  }
 
-            const result = await callApi('/bot/login', 'POST', { username, password });
-            if (result.success) {
-                setSession(chatId, username);
-                userStates[chatId] = 'idle';
-                delete userTemp[chatId];
-                await sendMessage(chatId, `✅ <b>ورود موفق!</b>\nخوش آمدید ${username}`, mainMenu());
-            } else {
-                userStates[chatId] = 'idle';
-                delete userTemp[chatId];
-                await sendMessage(chatId, `❌ خطا در ورود: ${result.message || 'نام کاربری یا رمز اشتباه است'}`, mainMenu());
-            }
-            return;
-        }
-
-        // ساخت کانفیگ - مرحلهٔ نام
-        if (state === 'awaiting_config_name') {
-            userStates[chatId] = 'awaiting_config_days';
-            userTemp[chatId] = { name: text };
-            await sendMessage(chatId, `📅 تعداد روزهای اعتبار را به عدد وارد کنید:`, backMenu());
-            return;
-        }
-
-        // ساخت کانفیگ - مرحلهٔ روز
-        if (state === 'awaiting_config_days') {
-            const name = userTemp[chatId]?.name;
-            if (!name) {
-                userStates[chatId] = 'idle';
-                return showMainMenu(chatId);
-            }
-            const days = parseInt(text);
-            if (isNaN(days) || days <= 0) {
-                await sendMessage(chatId, `❌ لطفاً یک عدد معتبر بزرگتر از صفر وارد کنید.`, backMenu());
-                return;
-            }
-
-            const result = await callApi('/bot/new-config', 'POST', { name, days }, chatId);
-            userStates[chatId] = 'idle';
-            delete userTemp[chatId];
-
-            if (result.success) {
-                await sendMessage(chatId, `✅ کانفیگ "${name}" با ${days} روز اعتبار ساخته شد.`, mainMenu());
-            } else {
-                await sendMessage(chatId, `❌ خطا: ${result.message || 'مشخص نیست'}`, mainMenu());
-            }
-            return;
-        }
-
-        // اگر کاربر در حال مکالمه نبود، پیام نادیده گرفته شود
-        if (!text.startsWith('/')) {
-            await sendMessage(chatId, `❌ لطفاً از دکمه‌های منو استفاده کنید.`, mainMenu());
-        }
-        return;
-    }
-
-    // ------ کلیک روی دکمه (CallbackQuery) ------
-    if (update.callback_query) {
-        const query = update.callback_query;
-        const chatId = query.message.chat.id;
-        const messageId = query.message.message_id;
-        const data = query.data;
-        const callbackId = query.id;
-
-        await answerCallback(callbackId);
-
-        // بازگشت به منو
-        if (data === 'main') {
-            userStates[chatId] = 'idle';
-            delete userTemp[chatId];
-            return showMainMenu(chatId, messageId);
-        }
-
-        // ورود
-        if (data === 'login') {
-            if (isLoggedIn(chatId)) {
-                await answerCallback(callbackId, 'شما قبلاً وارد شده‌اید!', true);
-                return showMainMenu(chatId, messageId);
-            }
-            userStates[chatId] = 'awaiting_username';
-            await editMessage(chatId, messageId, `👤 لطفاً <b>یوزرنیم</b> خود را وارد کنید:`, backMenu());
-            return;
-        }
-
-        // لیست کانفیگ‌ها
-        if (data === 'list') {
-            if (!isLoggedIn(chatId)) {
-                await answerCallback(callbackId, 'لطفاً ابتدا وارد شوید!', true);
-                return showMainMenu(chatId, messageId);
-            }
-            const result = await callApi('/bot/configs', 'GET', null, chatId);
-            if (result.success && result.configs && result.configs.length > 0) {
-                let txt = `📋 <b>لیست کانفیگ‌ها (${result.configs.length}):</b>\n\n`;
-                result.configs.forEach((cfg, i) => {
-                    const exp = new Date(cfg.expiry).toLocaleDateString('fa-IR');
-                    const up = (cfg.up / 1024 / 1024).toFixed(1);
-                    const down = (cfg.down / 1024 / 1024).toFixed(1);
-                    txt += `${i+1}. <b>${cfg.name}</b>\n   انقضا: ${exp}\n   مصرف: ${up}MB / ${down}MB\n\n`;
-                });
-                await editMessage(chatId, messageId, txt, {
-                    inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'main' }]],
-                });
-            } else {
-                await editMessage(chatId, messageId, `📭 هیچ کانفیگی ندارید.`, backMenu());
-            }
-            return;
-        }
-
-        // ساخت کانفیگ جدید
-        if (data === 'new') {
-            if (!isLoggedIn(chatId)) {
-                await answerCallback(callbackId, 'ابتدا وارد شوید!', true);
-                return showMainMenu(chatId, messageId);
-            }
-            userStates[chatId] = 'awaiting_config_name';
-            await editMessage(chatId, messageId, `✏️ یک <b>نام</b> برای کانفیگ جدید وارد کنید:`, backMenu());
-            return;
-        }
-
-        // حذف کانفیگ (نمایش لیست با دکمه)
-        if (data === 'delete') {
-            if (!isLoggedIn(chatId)) {
-                await answerCallback(callbackId, 'ابتدا وارد شوید!', true);
-                return showMainMenu(chatId, messageId);
-            }
-            const result = await callApi('/bot/configs', 'GET', null, chatId);
-            if (!result.success || !result.configs || result.configs.length === 0) {
-                await editMessage(chatId, messageId, `📭 کانفیگی برای حذف وجود ندارد.`, backMenu());
-                return;
-            }
-            const buttons = result.configs.map((cfg) => [
-                { text: `🗑️ ${cfg.name}`, callback_data: `del_${cfg.name}` },
-            ]);
-            buttons.push([{ text: '🔙 بازگشت', callback_data: 'main' }]);
-            await editMessage(chatId, messageId, `⚠️ کانفیگ مورد نظر برای حذف را انتخاب کنید:`, {
-                inline_keyboard: buttons,
-            });
-            return;
-        }
-
-        // اجرای حذف (وقتی کاربر روی دکمهٔ حذف یک کانفیگ کلیک کند)
-        if (data.startsWith('del_')) {
-            const name = data.substring(4);
-            const result = await callApi(`/bot/configs?name=${encodeURIComponent(name)}`, 'DELETE', null, chatId);
-            if (result.success) {
-                await editMessage(chatId, messageId, `✅ کانفیگ "${name}" حذف شد.`, mainMenu());
-            } else {
-                await editMessage(chatId, messageId, `❌ خطا در حذف: ${result.message || 'مشخص نیست'}`, mainMenu());
-            }
-            return;
-        }
-
-        // خروج
-        if (data === 'logout') {
-            if (!isLoggedIn(chatId)) {
-                await answerCallback(callbackId, 'شما وارد نشده‌اید!', true);
-                return showMainMenu(chatId, messageId);
-            }
-            clearSession(chatId);
-            userStates[chatId] = 'idle';
-            delete userTemp[chatId];
-            await editMessage(chatId, messageId, `🚪 شما خارج شدید.`, mainMenu());
-            return;
-        }
-
-        // راهنما
-        if (data === 'help') {
-            const helpText = `ℹ️ <b>راهنما</b>\n\n🔹 ورود: نام کاربری و رمز پنل\n🔹 لیست: مشاهده کانفیگ‌ها\n🔹 ساخت: نام و روز اعتبار\n🔹 حذف: انتخاب از لیست\n🔹 خروج: پایان نشست\n\nتمامی عملیات با دکمه‌ها انجام می‌شود.`;
-            await editMessage(chatId, messageId, helpText, backMenu());
-            return;
-        }
-
-        // دکمه ناشناخته
-        await answerCallback(callbackId, 'گزینه نامعتبر!', true);
-    }
+  return answerCallback(cb.id);
 }
 
-// ========== لانگ‌پولینگ ==========
+// ---------- polling loop ----------
 let offset = 0;
-async function pollUpdates() {
-    while (true) {
-        try {
-            const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?timeout=30&offset=${offset}`);
-            const data = await res.json();
-            if (data.ok && data.result) {
-                for (const update of data.result) {
-                    await handleUpdate(update);
-                    offset = update.update_id + 1;
-                }
-            }
-        } catch (e) {
-            console.error('Polling error:', e.message);
+async function pollLoop() {
+  while (true) {
+    try {
+      const res = await tg('getUpdates', { offset, timeout: 30 });
+      if (res.ok && res.result) {
+        for (const update of res.result) {
+          offset = update.update_id + 1;
+          if (update.message) {
+            handleMessage(update.message).catch((e) => console.error('handleMessage error', e));
+          } else if (update.callback_query) {
+            handleCallback(update.callback_query).catch((e) => console.error('handleCallback error', e));
+          }
         }
-        await new Promise(r => setTimeout(r, 1000));
+      }
+    } catch (e) {
+      console.error('poll error', e.message);
+      await new Promise((r) => setTimeout(r, 3000));
     }
+  }
 }
 
-console.log('✅ ربات با منوی دکمه‌ای راه‌اندازی شد (منطق قبلی حفظ شد)');
-pollUpdates();
+console.log('Davarnet Telegram bot started (button UI), polling...');
+pollLoop();
