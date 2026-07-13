@@ -60,16 +60,46 @@ function fmtBytes(bytes) {
 
 const HELP_TEXT = `<b>دستورات ربات Davarnet</b>
 
-/login یوزرنیم رمزعبور — ورود به حساب
+/login — ورود به حساب (قدم به قدم)
 /logout — خروج
 /list — نمایش کانفیگ‌های من
 /new اسم [روز_انقضا] — ساخت کانفیگ جدید
 /delete آیدی — حذف یه کانفیگ
 /help — همین راهنما`;
 
+// tracks users mid-login: chatId -> { step: 'username' | 'password', username? }
+const pendingLogin = new Map();
+
+async function tryLogin(chatId, u, p) {
+  try {
+    const result = await panel('/bot/login', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
+    if (!result.ok) return send(chatId, '❌ نام کاربری یا رمز عبور اشتباهه. دوباره امتحان کن: /login');
+    const sessions = loadSessions();
+    sessions[chatId] = u;
+    saveSessions(sessions);
+    return send(chatId, `✅ وارد شدی به عنوان <b>${u}</b>.\n\n${HELP_TEXT}`);
+  } catch (e) {
+    return send(chatId, '❌ خطا در ورود: ' + e.message);
+  }
+}
+
 async function handleMessage(msg) {
   const chatId = msg.chat.id;
   const text = (msg.text || '').trim();
+
+  // handle step-by-step login flow first (plain text replies, no leading slash)
+  if (!text.startsWith('/') && pendingLogin.has(chatId)) {
+    const state = pendingLogin.get(chatId);
+    if (state.step === 'username') {
+      pendingLogin.set(chatId, { step: 'password', username: text });
+      return send(chatId, '🔑 حالا رمز عبورت رو بفرست:');
+    }
+    if (state.step === 'password') {
+      pendingLogin.delete(chatId);
+      return tryLogin(chatId, state.username, text);
+    }
+  }
+
   if (!text.startsWith('/')) return;
 
   const [cmd, ...args] = text.split(/\s+/);
@@ -82,16 +112,11 @@ async function handleMessage(msg) {
 
   if (cmd === '/login') {
     const [u, p] = args;
-    if (!u || !p) return send(chatId, 'فرمت درست: /login یوزرنیم رمزعبور');
-    try {
-      const result = await panel('/bot/login', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
-      if (!result.ok) return send(chatId, '❌ نام کاربری یا رمز عبور اشتباهه.');
-      sessions[chatId] = u;
-      saveSessions(sessions);
-      return send(chatId, `✅ وارد شدی به عنوان <b>${u}</b>.`);
-    } catch (e) {
-      return send(chatId, '❌ خطا در ورود: ' + e.message);
-    }
+    // old one-line format still works: /login username password
+    if (u && p) return tryLogin(chatId, u, p);
+    // new step-by-step format
+    pendingLogin.set(chatId, { step: 'username' });
+    return send(chatId, '👤 یوزرنیمت رو بفرست:');
   }
 
   if (cmd === '/logout') {
