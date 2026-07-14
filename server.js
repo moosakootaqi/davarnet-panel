@@ -248,7 +248,13 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/me', requireAuth, (req, res) => {
-  res.json({ username: req.session.username, role: req.session.role, maxConfigs: MAX_CONFIGS_PER_USER });
+  const user = loadUsers().find((u) => u.username === req.session.username);
+  res.json({
+    username: req.session.username,
+    role: req.session.role,
+    maxConfigs: MAX_CONFIGS_PER_USER,
+    createdAt: user ? user.createdAt : null,
+  });
 });
 app.get('/api/meta', requireAuth, (req, res) => {
   res.json({ domain: PUBLIC_DOMAIN, wsPath: WS_PATH, maxConfigs: MAX_CONFIGS_PER_USER });
@@ -378,6 +384,7 @@ app.get('/bot/profile', requireBotSecret, (req, res) => {
   const totalTraffic = mine.reduce((sum, c) => sum + (traffic[c.id] ? traffic[c.id].uplink + traffic[c.id].downlink : 0), 0);
   res.json({
     username: user.username,
+    createdAt: user.createdAt,
     role: user.role,
     activeConfigs: mine.filter((c) => !isExpired(c)).length,
     totalConfigs: mine.length,
