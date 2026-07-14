@@ -1,0 +1,41 @@
+.sub-page {
+  position: relative; z-index: 1; max-width: 480px; margin: 0 auto; padding: 40px 16px 60px;
+}
+.sub-brand {
+  display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 28px;
+  font-weight: 700; font-size: 18px;
+}
+.sub-card { padding: 20px 22px; margin-bottom: 16px; }
+.center-text { text-align: center; color: var(--text-muted); }
+
+.sub-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sub-hero-top h1 { font-size: 19px; margin: 0; }
+
+.sub-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+@media (max-width: 480px) { .sub-grid { grid-template-columns: 1fr; } }
+
+.sub-card-title { font-size: 13px; color: var(--text-muted); margin-bottom: 10px; font-weight: 600; }
+.sub-big-value { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
+
+.progress-track { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; margin-bottom: 8px; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 4px; transition: width 0.4s ease; }
+
+.ping-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.ping-value.good { color: var(--success); }
+.ping-value.mid { color: var(--warning); }
+.ping-value.bad { color: var(--danger); }
+
+.sub-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+
+.app-links { display: flex; gap: 10px; margin: 10px 0; }
+.app-link {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 14px 8px; border-radius: 12px; background: rgba(255,255,255,0.04);
+  border: 1px solid var(--card-border); text-decoration: none; color: var(--text);
+  font-size: 12.5px; text-align: center; transition: transform 0.15s ease, background 0.15s ease;
+}
+.app-link:hover { transform: translateY(-2px); background: rgba(255,255,255,0.08); }
+.app-icon { font-size: 24px; }
+.app-link small { color: var(--text-muted); }
+
+.sub-footer { text-align: center; color: #565c7e; font-size: 12px; margin-top: 30px; }
