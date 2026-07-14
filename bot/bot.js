@@ -16,6 +16,9 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json'); // chatId -> { username, role }
 const REMINDED_FILE = path.join(DATA_DIR, 'reminded.json'); // client ids already reminded
+const STREAKS_FILE = path.join(DATA_DIR, 'streaks.json'); // chatId -> { lastDate, count }
+const ANNIV_FILE = path.join(DATA_DIR, 'anniversaries.json'); // username -> last congratulated month number
+const EASTER_FILE = path.join(DATA_DIR, 'easter.json'); // username -> claimed (bool)
 
 function loadJson(file, fallback) {
   if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(fallback));
@@ -27,6 +30,36 @@ function loadSessions() { return loadJson(SESSIONS_FILE, {}); }
 function saveSessions(s) { saveJson(SESSIONS_FILE, s); }
 function loadReminded() { return loadJson(REMINDED_FILE, {}); }
 function saveReminded(r) { saveJson(REMINDED_FILE, r); }
+function loadStreaks() { return loadJson(STREAKS_FILE, {}); }
+function saveStreaks(s) { saveJson(STREAKS_FILE, s); }
+function loadAnniv() { return loadJson(ANNIV_FILE, {}); }
+function saveAnniv(a) { saveJson(ANNIV_FILE, a); }
+function loadEaster() { return loadJson(EASTER_FILE, {}); }
+function saveEaster(e) { saveJson(EASTER_FILE, e); }
+
+// ---------- personality: varied phrases instead of always the same line ----------
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+const PHRASES = {
+  welcomeBack: ['خوش برگشتی 👋', 'دوباره سلام 😊', 'به‌به، اینجایی 👋'],
+  configCreated: ['🎉 کانفیگ ساخته شد!', '✅ آماده‌ست، بفرما!', '🚀 ساخته شد، خوش بگذره!'],
+  configDeleted: ['🗑️ حذف شد.', 'باشه، پاکش کردم 🗑️', 'رفت که رفت 👋'],
+  nothingHere: ['هنوز کانفیگی نساختی 🤔', 'اینجا خالیه، یکی بساز 👆', 'فعلاً چیزی نیست، بزن بسازیم!'],
+};
+
+// ---------- daily streak tracking ----------
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function touchStreak(chatId) {
+  const streaks = loadStreaks();
+  const today = todayStr();
+  const entry = streaks[chatId] || { lastDate: null, count: 0 };
+  if (entry.lastDate === today) return { count: entry.count, incremented: false };
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  entry.count = entry.lastDate === yesterday ? entry.count + 1 : 1;
+  entry.lastDate = today;
+  streaks[chatId] = entry;
+  saveStreaks(streaks);
+  return { count: entry.count, incremented: true };
+}
 
 const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
@@ -162,7 +195,7 @@ async function listConfigs(chatId) {
   const session = getSession(chatId);
   try {
     const clients = await panel(`/bot/clients?username=${encodeURIComponent(session.username)}`);
-    if (clients.length === 0) return send(chatId, 'هنوز کانفیگی نساختی. رو «➕ کانفیگ جدید» بزن.');
+    if (clients.length === 0) return send(chatId, `${pick(PHRASES.nothingHere)} رو «➕ کانفیگ جدید» بزن.`);
     for (const c of clients) {
       const status = c.expired ? '❌ منقضی' : '✅ فعال';
       const expiryLine = c.expiresAt ? `\nانقضا: ${new Date(c.expiresAt).toLocaleDateString('fa-IR')}` : '\nانقضا: ندارد';
@@ -186,7 +219,7 @@ async function createConfig(chatId, name, expiryDays) {
       method: 'POST',
       body: JSON.stringify({ username: session.username, name, expiryDays: expiryDays || null }),
     });
-    await send(chatId, `🎉 کانفیگ ساخته شد!\n\n${client.link}`, { reply_markup: configActionsKeyboard(client.id) });
+    await send(chatId, `${pick(PHRASES.configCreated)}\n\n${client.link}`, { reply_markup: configActionsKeyboard(client.id) });
     await showMainMenu(chatId, 'کار دیگه‌ای هست؟');
   } catch (e) {
     await send(chatId, '❌ خطا: ' + e.message);
@@ -197,7 +230,7 @@ async function deleteConfig(chatId, id) {
   const session = getSession(chatId);
   try {
     await panel(`/bot/clients/${encodeURIComponent(id)}?username=${encodeURIComponent(session.username)}`, { method: 'DELETE' });
-    await send(chatId, '🗑️ حذف شد.');
+    await send(chatId, pick(PHRASES.configDeleted));
   } catch (e) {
     await send(chatId, '❌ خطا: ' + e.message);
   }
@@ -208,7 +241,11 @@ async function showProfile(chatId) {
   try {
     const p = await panel(`/bot/profile?username=${encodeURIComponent(session.username)}`);
     const limitLine = p.maxConfigs > 0 ? `${p.activeConfigs} / ${p.maxConfigs}` : `${p.activeConfigs} (نامحدود)`;
-    const text = `👤 <b>${p.username}</b>\nنقش: ${p.role === 'admin' ? 'ادمین' : 'کاربر'}\nکانفیگ‌های فعال: ${limitLine}\nکل کانفیگ‌ها: ${p.totalConfigs}\nمجموع مصرف: ${fmtBytes(p.totalTraffic)}`;
+    const streaks = loadStreaks();
+    const streak = (streaks[chatId] && streaks[chatId].count) || 0;
+    const ageDays = p.createdAt ? Math.floor((Date.now() - new Date(p.createdAt).getTime()) / 86400000) : null;
+    const badge = ageDays === null ? '' : ageDays >= 180 ? '🥇 کاربر طلایی' : ageDays >= 30 ? '🥈 کاربر باتجربه' : '🥉 عضو جدید';
+    const text = `👤 <b>${p.username}</b> ${badge}\nنقش: ${p.role === 'admin' ? 'ادمین' : 'کاربر'}\nکانفیگ‌های فعال: ${limitLine}\nکل کانفیگ‌ها: ${p.totalConfigs}\nمجموع مصرف: ${fmtBytes(p.totalTraffic)}\n🔥 استریک: ${streak} روز متوالی`;
     await send(chatId, text);
   } catch (e) {
     await send(chatId, '❌ خطا: ' + e.message);
@@ -316,6 +353,44 @@ async function handleMessage(msg) {
   const chatId = msg.chat.id;
   const text = (msg.text || '').trim();
   if (!text) return;
+
+  // 🎁 hidden easter egg word
+  if (text === 'آبراکادابرا') {
+    const session = getSession(chatId);
+    if (!session) return send(chatId, '✨ یه چیزی حس کردم... ولی اول باید وارد بشی تا ببینم چی نصیبت میشه 😄');
+    const easter = loadEaster();
+    if (easter[session.username]) {
+      return send(chatId, '😄 قبلاً این جادو رو امتحان کردی! یه بار بیشتر کار نمی‌کنه.');
+    }
+    try {
+      const clients = await panel(`/bot/clients?username=${encodeURIComponent(session.username)}`);
+      const activeClient = clients.find((c) => !c.expired);
+      if (activeClient) {
+        await panel(`/bot/clients/${encodeURIComponent(activeClient.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ username: session.username, addDays: 3 }),
+        });
+        await send(chatId, `🎉✨ جادو کار کرد! ۳ روز به کانفیگ «${activeClient.name}» اضافه شد. مبارکه!`);
+      } else {
+        await send(chatId, '✨ جادو رو حس کردم ولی کانفیگ فعالی نداری که روش اجرا کنم. یکی بساز و دوباره امتحان کن!');
+        return;
+      }
+      easter[session.username] = true;
+      saveEaster(easter);
+    } catch (e) {
+      await send(chatId, '❌ جادو شکست خورد: ' + e.message);
+    }
+    return;
+  }
+
+  // daily streak tracking (only for logged-in users)
+  const activeSession = getSession(chatId);
+  if (activeSession) {
+    const { count, incremented } = touchStreak(chatId);
+    if (incremented && [3, 7, 14, 30, 60, 100].includes(count)) {
+      send(chatId, `🔥 عالیه! ${count} روز متوالیه که سر می‌زنی!`);
+    }
+  }
 
   const state = pending.get(chatId);
 
@@ -505,6 +580,33 @@ async function checkExpiringConfigs() {
 }
 setInterval(checkExpiringConfigs, 6 * 60 * 60 * 1000);
 setTimeout(checkExpiringConfigs, 30 * 1000);
+
+// ---------- monthly subscription anniversary ----------
+async function checkAnniversaries() {
+  try {
+    const sessions = loadSessions();
+    const anniv = loadAnniv();
+    const usernames = [...new Set(Object.values(sessions).map((s) => s.username))];
+    for (const username of usernames) {
+      const chatId = Object.keys(sessions).find((id) => sessions[id].username === username);
+      if (!chatId) continue;
+      const profile = await panel(`/bot/profile?username=${encodeURIComponent(username)}`).catch(() => null);
+      if (!profile || !profile.createdAt) continue;
+      const ageDays = Math.floor((Date.now() - new Date(profile.createdAt).getTime()) / 86400000);
+      const monthNumber = Math.floor(ageDays / 30);
+      if (monthNumber < 1) continue;
+      if (anniv[username] === monthNumber) continue; // already congratulated for this milestone
+      anniv[username] = monthNumber;
+      const label = monthNumber === 1 ? 'یه ماهه' : `${monthNumber} ماهه`;
+      await send(chatId, `🎉 تبریک! ${label} با <b>Davarnet</b> همراهی، ممنون که هستی 💜`);
+    }
+    saveAnniv(anniv);
+  } catch (e) {
+    console.error('anniversary check failed', e.message);
+  }
+}
+setInterval(checkAnniversaries, 12 * 60 * 60 * 1000);
+setTimeout(checkAnniversaries, 45 * 1000);
 
 // ---------- polling loop ----------
 let offset = 0;
