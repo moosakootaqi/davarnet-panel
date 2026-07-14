@@ -17,6 +17,8 @@
 </head>
 <body>
 
+<canvas id="confettiCanvas" class="confetti-canvas"></canvas>
+
 <div class="bg-orbs">
   <span class="orb orb1"></span>
   <span class="orb orb2"></span>
@@ -55,11 +57,24 @@
       <span>Davarnet</span>
     </a>
     <div class="topbar-right">
+      <div id="colorSwatches" class="color-swatches">
+        <button class="swatch" data-c1="#6366f1" data-c2="#8b5cf6" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)" title="بنفش"></button>
+        <button class="swatch" data-c1="#0ea5e9" data-c2="#22d3ee" style="background:linear-gradient(135deg,#0ea5e9,#22d3ee)" title="آبی"></button>
+        <button class="swatch" data-c1="#f43f5e" data-c2="#fb7185" style="background:linear-gradient(135deg,#f43f5e,#fb7185)" title="رز"></button>
+        <button class="swatch" data-c1="#f59e0b" data-c2="#fbbf24" style="background:linear-gradient(135deg,#f59e0b,#fbbf24)" title="طلایی"></button>
+        <button class="swatch" data-c1="#10b981" data-c2="#34d399" style="background:linear-gradient(135deg,#10b981,#34d399)" title="سبز"></button>
+      </div>
       <button id="themeToggle" class="theme-toggle" title="تغییر تم">🌙</button>
+      <span id="badge" class="loyalty-badge"></span>
       <span id="whoami" class="who"></span>
       <button id="logoutBtn" class="btn ghost">خروج</button>
     </div>
   </header>
+
+  <div id="mascotWrap" class="mascot-wrap">
+    <div id="mascot" class="mascot"></div>
+    <div id="mascotSpeech" class="mascot-speech"></div>
+  </div>
 
   <main class="container">
     <nav id="tabs" class="tabs hidden">
@@ -68,6 +83,19 @@
     </nav>
 
     <section id="clientsTab" class="tab-panel">
+      <div class="glass-card network-widget">
+        <svg viewBox="0 0 300 90" class="network-svg">
+          <line x1="40" y1="45" x2="150" y2="45" class="net-line" />
+          <line x1="150" y1="45" x2="260" y2="45" class="net-line" />
+          <line x1="150" y1="45" x2="150" y2="20" class="net-line" />
+          <circle cx="40" cy="45" r="7" class="net-dot" />
+          <circle cx="150" cy="45" r="10" class="net-dot net-dot-main" />
+          <circle cx="150" cy="20" r="6" class="net-dot" />
+          <circle cx="260" cy="45" r="7" class="net-dot net-dot-pulse" />
+        </svg>
+        <span class="network-label">🌐 شبکه زنده — سرور آنلاینه</span>
+      </div>
+
       <div class="glass-card add-card">
         <h3>ساخت کانفیگ جدید</h3>
         <div class="add-row">
