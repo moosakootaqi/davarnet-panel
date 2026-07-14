@@ -15,6 +15,8 @@ const PANEL_PORT = process.env.PANEL_PORT || 3000;
 const INBOUND_PORT = process.env.INBOUND_PORT || 8443;
 const WS_PATH = process.env.WS_PATH || '/davarnet-ws';
 const PUBLIC_DOMAIN = process.env.INBOUND_DOMAIN || '';
+// The panel's OWN public domain (the one mapped to port 3000) - used to build /sub links
+const PANEL_DOMAIN = process.env.PANEL_DOMAIN || '';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'changeme';
 const MAX_CONFIGS_PER_USER = parseInt(process.env.MAX_CONFIGS_PER_USER || '0', 10); // 0 = unlimited
@@ -224,6 +226,18 @@ function buildLinkFor(client) {
   const wsPath = encodeURIComponent(WS_PATH);
   return `vless://${client.uuid}@${domain}:443?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=${wsPath}#${encodeURIComponent(client.name)}`;
 }
+// the shareable link users/apps actually get from now on - a subscription URL,
+// not the raw vless:// config. Visiting it in a browser shows a pretty status page;
+// VPN client apps get the actual base64 subscription content instead.
+function buildSubUrl(client) {
+  if (!PANEL_DOMAIN) return '';
+  return `https://${PANEL_DOMAIN}/sub/${client.id}`;
+}
+const VPN_CLIENT_UA_PATTERN = /v2ray|v2rayng|v2rayn|xray|clash|sing-box|singbox|shadowrocket|quantumult|surge|stash|nekoray|nekobox|hiddify|streisand|napsternet|karing|matsuri|kitsunebi|pharos|loon/i;
+function isVpnClientRequest(req) {
+  const ua = req.headers['user-agent'] || '';
+  return VPN_CLIENT_UA_PATTERN.test(ua);
+}
 
 // ---------- app ----------
 const app = express();
@@ -257,7 +271,7 @@ app.get('/api/me', requireAuth, (req, res) => {
   });
 });
 app.get('/api/meta', requireAuth, (req, res) => {
-  res.json({ domain: PUBLIC_DOMAIN, wsPath: WS_PATH, maxConfigs: MAX_CONFIGS_PER_USER });
+  res.json({ domain: PUBLIC_DOMAIN, wsPath: WS_PATH, maxConfigs: MAX_CONFIGS_PER_USER, panelDomainSet: !!PANEL_DOMAIN });
 });
 
 // ===== admin: users =====
@@ -295,6 +309,7 @@ app.get('/api/clients', requireAuth, (req, res) => {
     ...c,
     expired: isExpired(c),
     traffic: traffic[c.id] ? traffic[c.id].uplink + traffic[c.id].downlink : 0,
+    subUrl: buildSubUrl(c),
   }));
   res.json(enriched);
 });
@@ -307,7 +322,7 @@ app.post('/api/clients', requireAuth, (req, res) => {
     }
   }
   const client = createClientFor(req.session.username, name, note, expiryDays);
-  res.json(client);
+  res.json({ ...client, subUrl: buildSubUrl(client) });
 });
 
 app.delete('/api/clients/:id', requireAuth, (req, res) => {
@@ -327,7 +342,7 @@ app.post('/bot/login', requireBotSecret, (req, res) => {
   res.json({ ok: true, role: user.role });
 });
 app.get('/bot/meta', requireBotSecret, (req, res) => {
-  res.json({ domain: PUBLIC_DOMAIN, wsPath: WS_PATH, maxConfigs: MAX_CONFIGS_PER_USER });
+  res.json({ domain: PUBLIC_DOMAIN, wsPath: WS_PATH, maxConfigs: MAX_CONFIGS_PER_USER, panelDomainSet: !!PANEL_DOMAIN });
 });
 app.get('/bot/health', requireBotSecret, (req, res) => {
   res.json({ ok: true, ts: Date.now() });
@@ -336,7 +351,7 @@ app.get('/bot/clients', requireBotSecret, (req, res) => {
   const username = req.query.username;
   if (!username) return res.status(400).json({ error: 'username required' });
   const clients = loadClients().filter((c) => c.owner === username);
-  res.json(clients.map((c) => ({ ...c, expired: isExpired(c), link: buildLinkFor(c) })));
+  res.json(clients.map((c) => ({ ...c, expired: isExpired(c), link: buildSubUrl(c) })));
 });
 app.post('/bot/clients', requireBotSecret, (req, res) => {
   const { username, name, note, expiryDays } = req.body || {};
@@ -345,7 +360,7 @@ app.post('/bot/clients', requireBotSecret, (req, res) => {
     return res.status(403).json({ error: `حداکثر ${MAX_CONFIGS_PER_USER} کانفیگ فعال مجاز است` });
   }
   const client = createClientFor(username, name, note, expiryDays);
-  res.json({ ...client, link: buildLinkFor(client) });
+  res.json({ ...client, link: buildSubUrl(client) });
 });
 app.delete('/bot/clients/:id', requireBotSecret, (req, res) => {
   const username = req.query.username;
@@ -370,7 +385,7 @@ app.patch('/bot/clients/:id', requireBotSecret, (req, res) => {
   }
   saveClients(clients);
   applyConfig();
-  res.json({ ...target, expired: isExpired(target), link: buildLinkFor(target) });
+  res.json({ ...target, expired: isExpired(target), link: buildSubUrl(target) });
 });
 
 // profile summary for the "حساب من" button
@@ -432,6 +447,43 @@ app.delete('/bot/admin/users/:username', requireBotSecret, requireActingAdmin, (
   saveClients(clients);
   applyConfig();
   res.json({ ok: true });
+});
+
+// ===== public subscription routes (no login required - the id itself is the secret) =====
+app.get('/sub/:id/data', (req, res) => {
+  const client = loadClients().find((c) => c.id === req.params.id);
+  if (!client) return res.status(404).json({ error: 'not found' });
+  const traffic = getTrafficStats();
+  const t = traffic[client.id] || { uplink: 0, downlink: 0 };
+  res.json({
+    name: client.name,
+    note: client.note || '',
+    expired: isExpired(client),
+    expiresAt: client.expiresAt,
+    createdAt: client.createdAt,
+    traffic: t.uplink + t.downlink,
+    uplink: t.uplink,
+    downlink: t.downlink,
+    pingDomain: PUBLIC_DOMAIN,
+    subUrl: buildSubUrl(client),
+  });
+});
+
+app.get('/sub/:id', (req, res) => {
+  const client = loadClients().find((c) => c.id === req.params.id);
+  if (!client) return res.status(404).send('Not found');
+
+  if (isVpnClientRequest(req)) {
+    const traffic = getTrafficStats();
+    const t = traffic[client.id] || { uplink: 0, downlink: 0 };
+    const expireEpoch = client.expiresAt ? Math.floor(new Date(client.expiresAt).getTime() / 1000) : 0;
+    const TOTAL_SENTINEL = 1024 * 1024 * 1024 * 1024; // 1TB sentinel since we don't cap by volume
+    res.set('Subscription-Userinfo', `upload=${t.uplink}; download=${t.downlink}; total=${TOTAL_SENTINEL}; expire=${expireEpoch}`);
+    res.set('Content-Type', 'text/plain; charset=utf-8');
+    return res.send(Buffer.from(buildLinkFor(client) + '\n').toString('base64'));
+  }
+
+  return res.sendFile(path.join(__dirname, 'public', 'sub.html'));
 });
 
 // ===== static pages =====
