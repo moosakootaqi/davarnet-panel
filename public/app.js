@@ -20,6 +20,111 @@ document.getElementById('themeToggle').addEventListener('click', () => {
 });
 applyThemeIcon();
 
+// ---------- accent color picker ----------
+const savedColor = JSON.parse(localStorage.getItem('davarnet-color') || 'null');
+if (savedColor) {
+  document.documentElement.style.setProperty('--accent', savedColor.c1);
+  document.documentElement.style.setProperty('--accent-2', savedColor.c2);
+}
+document.querySelectorAll('.swatch').forEach((btn) => {
+  if (savedColor && btn.dataset.c1 === savedColor.c1) btn.classList.add('active');
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.swatch').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.documentElement.style.setProperty('--accent', btn.dataset.c1);
+    document.documentElement.style.setProperty('--accent-2', btn.dataset.c2);
+    localStorage.setItem('davarnet-color', JSON.stringify({ c1: btn.dataset.c1, c2: btn.dataset.c2 }));
+  });
+});
+
+// ---------- mascot ----------
+const MASCOT_FACES = {
+  happy: `<svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="27" fill="var(--accent)" opacity="0.15"/><circle cx="21" cy="26" r="3.2" fill="var(--text)"/><circle cx="39" cy="26" r="3.2" fill="var(--text)"/><path d="M18 36 Q30 46 42 36" stroke="var(--text)" stroke-width="3" fill="none" stroke-linecap="round"/></svg>`,
+  neutral: `<svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="27" fill="var(--warning)" opacity="0.15"/><circle cx="21" cy="26" r="3.2" fill="var(--text)"/><circle cx="39" cy="26" r="3.2" fill="var(--text)"/><path d="M20 38 Q30 34 40 38" stroke="var(--text)" stroke-width="3" fill="none" stroke-linecap="round"/></svg>`,
+  worried: `<svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="27" fill="var(--danger)" opacity="0.15"/><circle cx="21" cy="27" r="3.2" fill="var(--text)"/><circle cx="39" cy="27" r="3.2" fill="var(--text)"/><path d="M19 40 Q30 32 41 40" stroke="var(--text)" stroke-width="3" fill="none" stroke-linecap="round"/></svg>`,
+};
+function updateMascot(clients) {
+  const mascotEl = document.getElementById('mascot');
+  const speechEl = document.getElementById('mascotSpeech');
+  if (!mascotEl) return;
+  const active = clients.filter((c) => !c.expired);
+  const hasExpired = clients.some((c) => c.expired);
+  const soon = active
+    .map((c) => (c.expiresAt ? Math.ceil((new Date(c.expiresAt).getTime() - Date.now()) / 86400000) : null))
+    .filter((d) => d !== null);
+  const minLeft = soon.length ? Math.min(...soon) : null;
+
+  if (hasExpired) {
+    mascotEl.innerHTML = MASCOT_FACES.worried;
+    speechEl.textContent = 'یکی از کانفیگ‌هات منقضی شده، یه سر بزن 👀';
+  } else if (minLeft !== null && minLeft <= 3) {
+    mascotEl.innerHTML = MASCOT_FACES.neutral;
+    speechEl.textContent = `یه کانفیگ ${minLeft} روز دیگه منقضی میشه، تمدیدش کن 🙂`;
+  } else if (clients.length === 0) {
+    mascotEl.innerHTML = MASCOT_FACES.neutral;
+    speechEl.textContent = 'هنوز کانفیگی نساختی، شروع کن! 👋';
+  } else {
+    mascotEl.innerHTML = MASCOT_FACES.happy;
+    speechEl.textContent = 'همه‌چی مرتبه ✨';
+  }
+}
+
+// ---------- confetti + sound celebration ----------
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.25);
+  } catch (e) { /* audio not available, ignore */ }
+}
+function celebrate() {
+  playBeep();
+  const canvas = document.getElementById('confettiCanvas');
+  if (!canvas) return;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  const ctx = canvas.getContext('2d');
+  const colors = ['#6366f1', '#8b5cf6', '#22d3ee', '#f59e0b', '#f43f5e'];
+  const pieces = Array.from({ length: 80 }, () => ({
+    x: canvas.width / 2 + (Math.random() - 0.5) * 120,
+    y: canvas.height / 3,
+    vx: (Math.random() - 0.5) * 9,
+    vy: Math.random() * -9 - 3,
+    size: Math.random() * 6 + 4,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    rot: Math.random() * 360,
+    vr: (Math.random() - 0.5) * 12,
+  }));
+  let frame = 0;
+  function tick() {
+    frame++;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    pieces.forEach((p) => {
+      p.vy += 0.25;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rot += p.vr;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate((p.rot * Math.PI) / 180);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+      ctx.restore();
+    });
+    if (frame < 90) requestAnimationFrame(tick);
+    else ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  tick();
+}
+
 function toast(msg, type = 'success') {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
@@ -94,8 +199,18 @@ async function afterLogin() {
   meta = await api('/api/meta');
   showApp();
   updateLimitInfo();
+  updateLoyaltyBadge();
   await loadClients();
   if (me.role === 'admin') await loadUsers();
+}
+
+function updateLoyaltyBadge() {
+  const el = document.getElementById('badge');
+  if (!me.createdAt) { el.textContent = ''; return; }
+  const days = Math.floor((Date.now() - new Date(me.createdAt).getTime()) / (24 * 60 * 60 * 1000));
+  if (days >= 180) el.textContent = '🥇 کاربر طلایی';
+  else if (days >= 30) el.textContent = '🥈 کاربر باتجربه';
+  else el.textContent = '🥉 عضو جدید';
 }
 
 function updateLimitInfo() {
@@ -129,6 +244,7 @@ async function loadClients() {
   }
 
   window._clients = clients;
+  updateMascot(clients);
 
   clients.forEach((c) => {
     const left = daysLeft(c.expiresAt);
@@ -205,6 +321,7 @@ document.getElementById('addClientBtn').addEventListener('click', async () => {
     noteEl.value = '';
     expiryEl.value = '';
     toast('کانفیگ ساخته شد 🎉');
+    celebrate();
     await loadClients();
   } catch (err) {
     toast(err.message, 'error');
