@@ -146,9 +146,7 @@ async function api(path, options = {}) {
 }
 
 function buildLink(client) {
-  const domain = meta.domain;
-  const wsPath = encodeURIComponent(meta.wsPath || '/');
-  return `vless://${client.uuid}@${domain}:443?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=${wsPath}#${encodeURIComponent(client.name)}`;
+  return client.subUrl || '';
 }
 
 function formatBytes(bytes) {
@@ -236,7 +234,9 @@ async function loadClients() {
   const clients = await api('/api/clients');
   const list = document.getElementById('clientsList');
 
-  list.innerHTML = !meta.domain ? '<div class="empty-state">⚠️ دامنه اینباند هنوز تنظیم نشده (INBOUND_DOMAIN)</div>' : '';
+  list.innerHTML = '';
+  if (!meta.domain) list.innerHTML += '<div class="empty-state">⚠️ دامنه اینباند هنوز تنظیم نشده (INBOUND_DOMAIN)</div>';
+  if (!meta.panelDomainSet) list.innerHTML += '<div class="empty-state">⚠️ دامنه پنل هنوز تنظیم نشده (PANEL_DOMAIN) — لینک‌های ساب کار نمی‌کنن</div>';
 
   if (clients.length === 0) {
     list.innerHTML += '<div class="empty-state">هنوز کانفیگی ساخته نشده. یکی بساز 👆</div>';
@@ -267,10 +267,11 @@ async function loadClients() {
         <span>مصرف: ${formatBytes(c.traffic)}</span>
         <div class="traffic-bar"><div class="traffic-bar-fill" style="width:${Math.min(100, (c.traffic / (1024*1024*1024)) * 20)}%"></div></div>
       </div>
-      <div class="client-link">${meta.domain ? buildLink(c) : '—'}</div>
+      <div class="client-link">${buildLink(c) || '—'}</div>
       <div class="client-actions">
-        <button class="btn ghost small" data-action="copy" data-id="${c.id}">کپی لینک</button>
+        <button class="btn ghost small" data-action="copy" data-id="${c.id}">کپی لینک ساب</button>
         <button class="btn ghost small" data-action="qr" data-id="${c.id}">نمایش QR</button>
+        <a class="btn ghost small" href="${buildLink(c)}" target="_blank" rel="noopener">صفحه ساب</a>
         <button class="btn danger small" data-action="delete" data-id="${c.id}">حذف</button>
       </div>
     `;
