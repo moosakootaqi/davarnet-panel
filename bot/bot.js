@@ -14,11 +14,11 @@ if (!BOT_TOKEN) { console.error('BOT_TOKEN env var is required'); process.exit(1
 if (!PANEL_URL) { console.error('PANEL_URL env var is required'); process.exit(1); }
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json'); // chatId -> { username, role }
-const REMINDED_FILE = path.join(DATA_DIR, 'reminded.json'); // client ids already reminded
-const STREAKS_FILE = path.join(DATA_DIR, 'streaks.json'); // chatId -> { lastDate, count }
-const ANNIV_FILE = path.join(DATA_DIR, 'anniversaries.json'); // username -> last congratulated month number
-const EASTER_FILE = path.join(DATA_DIR, 'easter.json'); // username -> claimed (bool)
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const REMINDED_FILE = path.join(DATA_DIR, 'reminded.json');
+const STREAKS_FILE = path.join(DATA_DIR, 'streaks.json');
+const ANNIV_FILE = path.join(DATA_DIR, 'anniversaries.json');
+const EASTER_FILE = path.join(DATA_DIR, 'easter.json');
 
 function loadJson(file, fallback) {
   if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(fallback));
@@ -37,29 +37,29 @@ function saveAnniv(a) { saveJson(ANNIV_FILE, a); }
 function loadEaster() { return loadJson(EASTER_FILE, {}); }
 function saveEaster(e) { saveJson(EASTER_FILE, e); }
 
-// ---------- personality: varied phrases instead of always the same line ----------
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
 const PHRASES = {
-  welcomeBack: ['خوش برگشتی 👋', 'دوباره سلام 😊', 'به‌به، اینجایی 👋'],
   configCreated: ['🎉 کانفیگ ساخته شد!', '✅ آماده‌ست، بفرما!', '🚀 ساخته شد، خوش بگذره!'],
   configDeleted: ['🗑️ حذف شد.', 'باشه، پاکش کردم 🗑️', 'رفت که رفت 👋'],
   nothingHere: ['هنوز کانفیگی نساختی 🤔', 'اینجا خالیه، یکی بساز 👆', 'فعلاً چیزی نیست، بزن بسازیم!'],
 };
 
-// ---------- daily streak tracking ----------
-function todayStr() { return new Date().toISOString().slice(0, 10); }
-function touchStreak(chatId) {
-  const streaks = loadStreaks();
-  const today = todayStr();
-  const entry = streaks[chatId] || { lastDate: null, count: 0 };
-  if (entry.lastDate === today) return { count: entry.count, incremented: false };
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  entry.count = entry.lastDate === yesterday ? entry.count + 1 : 1;
-  entry.lastDate = today;
-  streaks[chatId] = entry;
-  saveStreaks(streaks);
-  return { count: entry.count, incremented: true };
-}
+const FORTUNES = [
+  '🔮 امروز پینگت پایین می‌مونه، دلت شاد!',
+  '🔮 امروز روز خوبیه برای دانلود بدون قطعی 📥',
+  '🔮 یه اتصال پایدار در انتظارته امروز 🌐',
+  '🔮 امروز حتی فیلترینگ هم جلودار تو نیست 😎',
+  '🔮 سرعتت امروز مثل باد میشه 🌬️',
+  '🔮 امروز روز خوبیه، یه کانفیگ جدید بساز 🎁',
+];
+const JOKES = [
+  '😹 چرا کامپیوترا سرما می‌خورن؟ چون پنجره‌هاشون رو باز میذارن!',
+  '😹 وی‌پی‌ان به دوستش گفت: من همیشه یه راه فرار دارم 😏',
+  '😹 پسورد قوی مثل شوخی خوبه؛ هیچکس حدس نمی‌زنه ولی جفتشون یادت میره 🤷',
+  '😹 فرق سرور خوب با بد چیه؟ سرور خوب وقتی قطع میشه معذرت‌خواهی می‌کنه 😄',
+  '😹 من به سرورم گفتم دوستت دارم، گفت Connection timeout ⏱️',
+];
 
 const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
@@ -101,10 +101,8 @@ function qrUrlFor(link) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(link)}`;
 }
 
-// ---------- sessions helpers ----------
-function getSession(chatId) {
-  return loadSessions()[chatId] || null;
-}
+// ---------- sessions ----------
+function getSession(chatId) { return loadSessions()[chatId] || null; }
 function setSession(chatId, username, role) {
   const s = loadSessions();
   s[chatId] = { username, role };
@@ -116,6 +114,21 @@ function clearSession(chatId) {
   saveSessions(s);
 }
 
+// ---------- streaks ----------
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function touchStreak(chatId) {
+  const streaks = loadStreaks();
+  const today = todayStr();
+  const entry = streaks[chatId] || { lastDate: null, count: 0 };
+  if (entry.lastDate === today) return { count: entry.count, incremented: false };
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  entry.count = entry.lastDate === yesterday ? entry.count + 1 : 1;
+  entry.lastDate = today;
+  streaks[chatId] = entry;
+  saveStreaks(streaks);
+  return { count: entry.count, incremented: true };
+}
+
 // ---------- keyboards ----------
 function loggedOutKeyboard() {
   return { keyboard: [[{ text: '🔑 ورود' }]], resize_keyboard: true };
@@ -125,6 +138,7 @@ function loggedInKeyboard(isAdmin) {
     [{ text: '📋 کانفیگ‌های من' }, { text: '➕ کانفیگ جدید' }],
     [{ text: '👤 حساب من' }, { text: 'ℹ️ راهنما' }],
     [{ text: '📥 دانلود اپ' }, { text: '📶 تست سرعت' }],
+    [{ text: '🔮 فال روز' }, { text: '😹 یه جوک بگو' }],
   ];
   if (isAdmin) rows.push([{ text: '👑 مدیریت کاربران' }]);
   rows.push([{ text: '🚪 خروج' }]);
@@ -164,7 +178,7 @@ function adminMenuKeyboard() {
   };
 }
 
-// ---------- per-chat conversation state ----------
+// ---------- conversation state ----------
 const pending = new Map();
 
 async function showMainMenu(chatId, text) {
@@ -252,30 +266,6 @@ async function showProfile(chatId) {
   }
 }
 
-// ---------- admin actions ----------
-async function adminListUsers(chatId) {
-  const session = getSession(chatId);
-  try {
-    const users = await panel(`/bot/admin/users?actingUsername=${encodeURIComponent(session.username)}`);
-    const lines = users.map((u) => `${u.role === 'admin' ? '👑' : '•'} ${u.username}`);
-    await send(chatId, `<b>لیست کاربران:</b>\n\n${lines.join('\n')}`);
-  } catch (e) {
-    await send(chatId, '❌ خطا: ' + e.message);
-  }
-}
-async function adminDeleteUserPrompt(chatId) {
-  const session = getSession(chatId);
-  try {
-    const users = await panel(`/bot/admin/users?actingUsername=${encodeURIComponent(session.username)}`);
-    const nonAdmins = users.filter((u) => u.role !== 'admin');
-    if (nonAdmins.length === 0) return send(chatId, 'کاربر عادی‌ای برای حذف وجود نداره.');
-    const keyboard = nonAdmins.map((u) => [{ text: u.username, callback_data: `admindel:${u.username}` }]);
-    await send(chatId, 'کدوم کاربر حذف بشه؟', { reply_markup: { inline_keyboard: keyboard } });
-  } catch (e) {
-    await send(chatId, '❌ خطا: ' + e.message);
-  }
-}
-
 function tcpPing(host, port = 443, timeoutMs = 5000) {
   return new Promise((resolve) => {
     const start = Date.now();
@@ -310,8 +300,8 @@ https://github.com/2dust/v2rayN/releases
 
 <b>راهنمای وصل شدن:</b>
 ۱. اپ رو نصب کن
-۲. از پنل یا همین بات، لینک کانفیگتو کپی کن
-۳. تو اپ، گزینه Import from Clipboard (یا "+") رو بزن
+۲. لینک کانفیگتو کپی کن
+۳. تو اپ، گزینه Import from Clipboard رو بزن
 ۴. وصل شو ✅`;
   await send(chatId, text);
 }
@@ -322,12 +312,9 @@ async function showSpeedTest(chatId) {
     const start = Date.now();
     await panel('/bot/health');
     const panelMs = Date.now() - start;
-
     const metaData = await panel('/bot/meta');
     let tunnelMs = null;
-    if (metaData.domain) {
-      tunnelMs = await tcpPing(metaData.domain, 443);
-    }
+    if (metaData.domain) tunnelMs = await tcpPing(metaData.domain, 443);
 
     function verdict(ms) {
       if (ms === null) return '❌ در دسترس نیست';
@@ -341,10 +328,34 @@ async function showSpeedTest(chatId) {
 پنل: ${verdict(panelMs)}
 اتصال VPN: ${verdict(tunnelMs)}
 
-⚠️ این عدد فقط سلامت سرور رو نشون میده، نه سرعت اینترنت شخصی خودت (که به مسیر بین تو و سرور بستگی داره).`;
+⚠️ این عدد فقط سلامت سرور رو نشون میده، نه سرعت اینترنت شخصی خودت.`;
     await send(chatId, text);
   } catch (e) {
     await send(chatId, '❌ خطا در بررسی: ' + e.message);
+  }
+}
+
+// ---------- admin ----------
+async function adminListUsers(chatId) {
+  const session = getSession(chatId);
+  try {
+    const users = await panel(`/bot/admin/users?actingUsername=${encodeURIComponent(session.username)}`);
+    const lines = users.map((u) => `${u.role === 'admin' ? '👑' : '•'} ${u.username}`);
+    await send(chatId, `<b>لیست کاربران:</b>\n\n${lines.join('\n')}`);
+  } catch (e) {
+    await send(chatId, '❌ خطا: ' + e.message);
+  }
+}
+async function adminDeleteUserPrompt(chatId) {
+  const session = getSession(chatId);
+  try {
+    const users = await panel(`/bot/admin/users?actingUsername=${encodeURIComponent(session.username)}`);
+    const nonAdmins = users.filter((u) => u.role !== 'admin');
+    if (nonAdmins.length === 0) return send(chatId, 'کاربر عادی‌ای برای حذف وجود نداره.');
+    const keyboard = nonAdmins.map((u) => [{ text: u.username, callback_data: `admindel:${u.username}` }]);
+    await send(chatId, 'کدوم کاربر حذف بشه؟', { reply_markup: { inline_keyboard: keyboard } });
+  } catch (e) {
+    await send(chatId, '❌ خطا: ' + e.message);
   }
 }
 
@@ -354,14 +365,12 @@ async function handleMessage(msg) {
   const text = (msg.text || '').trim();
   if (!text) return;
 
-  // 🎁 hidden easter egg word
+  // hidden easter egg
   if (text === 'آبراکادابرا') {
     const session = getSession(chatId);
-    if (!session) return send(chatId, '✨ یه چیزی حس کردم... ولی اول باید وارد بشی تا ببینم چی نصیبت میشه 😄');
+    if (!session) return send(chatId, '✨ یه چیزی حس کردم... ولی اول باید وارد بشی 😄');
     const easter = loadEaster();
-    if (easter[session.username]) {
-      return send(chatId, '😄 قبلاً این جادو رو امتحان کردی! یه بار بیشتر کار نمی‌کنه.');
-    }
+    if (easter[session.username]) return send(chatId, '😄 قبلاً این جادو رو امتحان کردی!');
     try {
       const clients = await panel(`/bot/clients?username=${encodeURIComponent(session.username)}`);
       const activeClient = clients.find((c) => !c.expired);
@@ -370,10 +379,9 @@ async function handleMessage(msg) {
           method: 'PATCH',
           body: JSON.stringify({ username: session.username, addDays: 3 }),
         });
-        await send(chatId, `🎉✨ جادو کار کرد! ۳ روز به کانفیگ «${activeClient.name}» اضافه شد. مبارکه!`);
+        await send(chatId, `🎉✨ جادو کار کرد! ۳ روز به کانفیگ «${activeClient.name}» اضافه شد.`);
       } else {
-        await send(chatId, '✨ جادو رو حس کردم ولی کانفیگ فعالی نداری که روش اجرا کنم. یکی بساز و دوباره امتحان کن!');
-        return;
+        return send(chatId, '✨ جادو رو حس کردم ولی کانفیگ فعالی نداری. یکی بساز و دوباره امتحان کن!');
       }
       easter[session.username] = true;
       saveEaster(easter);
@@ -383,7 +391,6 @@ async function handleMessage(msg) {
     return;
   }
 
-  // daily streak tracking (only for logged-in users)
   const activeSession = getSession(chatId);
   if (activeSession) {
     const { count, incremented } = touchStreak(chatId);
@@ -393,7 +400,6 @@ async function handleMessage(msg) {
   }
 
   const state = pending.get(chatId);
-
   if (state) {
     if (state.type === 'login_username') {
       pending.set(chatId, { type: 'login_password', username: text });
@@ -447,8 +453,10 @@ async function handleMessage(msg) {
   if (text === '👤 حساب من') return showProfile(chatId);
   if (text === '📥 دانلود اپ') return showDownloadLinks(chatId);
   if (text === '📶 تست سرعت') return showSpeedTest(chatId);
+  if (text === '🔮 فال روز') return send(chatId, pick(FORTUNES));
+  if (text === '😹 یه جوک بگو') return send(chatId, pick(JOKES));
   if (text === 'ℹ️ راهنما') {
-    return send(chatId, 'از دکمه‌های پایین صفحه استفاده کن:\n📋 دیدن کانفیگ‌ها\n➕ ساخت کانفیگ جدید\n👤 اطلاعات حساب\n🚪 خروج از حساب');
+    return send(chatId, 'از دکمه‌های پایین صفحه استفاده کن:\n📋 دیدن کانفیگ‌ها\n➕ ساخت کانفیگ جدید\n👤 اطلاعات حساب\n📥 دانلود اپ\n📶 تست سرعت سرور\n🚪 خروج از حساب');
   }
   if (text === '👑 مدیریت کاربران') {
     return send(chatId, 'یکی رو انتخاب کن:', { reply_markup: adminMenuKeyboard() });
@@ -464,7 +472,7 @@ async function handleMessage(msg) {
   return showMainMenu(chatId, 'از دکمه‌های پایین استفاده کن 👇');
 }
 
-// ---------- callback (inline button) handler ----------
+// ---------- callback handler ----------
 async function handleCallback(cb) {
   const chatId = cb.message.chat.id;
   const data = cb.data;
@@ -506,7 +514,7 @@ async function handleCallback(cb) {
   }
 
   if (data.startsWith('extendopt:')) {
-    const parts = data.split(':'); // extendopt:<id>:<days>
+    const parts = data.split(':');
     const id = parts[1];
     const days = Number(parts[2]);
     await answerCallback(cb.id);
@@ -569,7 +577,7 @@ async function checkExpiringConfigs() {
       const chatId = Object.keys(sessions).find((id) => sessions[id].username === c.owner);
       if (chatId) {
         const days = Math.max(0, Math.ceil((new Date(c.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
-        await send(chatId, `⏳ کانفیگ «${c.name}» تا ${days} روز دیگه منقضی میشه. اگه لازمه از منو تمدیدش کن.`);
+        await send(chatId, `⏳ کانفیگ «${c.name}» تا ${days} روز دیگه منقضی میشه. اگه لازمه تمدیدش کن.`);
       }
       reminded[c.id] = true;
     }
@@ -581,7 +589,7 @@ async function checkExpiringConfigs() {
 setInterval(checkExpiringConfigs, 6 * 60 * 60 * 1000);
 setTimeout(checkExpiringConfigs, 30 * 1000);
 
-// ---------- monthly subscription anniversary ----------
+// ---------- anniversary job ----------
 async function checkAnniversaries() {
   try {
     const sessions = loadSessions();
@@ -595,7 +603,7 @@ async function checkAnniversaries() {
       const ageDays = Math.floor((Date.now() - new Date(profile.createdAt).getTime()) / 86400000);
       const monthNumber = Math.floor(ageDays / 30);
       if (monthNumber < 1) continue;
-      if (anniv[username] === monthNumber) continue; // already congratulated for this milestone
+      if (anniv[username] === monthNumber) continue;
       anniv[username] = monthNumber;
       const label = monthNumber === 1 ? 'یه ماهه' : `${monthNumber} ماهه`;
       await send(chatId, `🎉 تبریک! ${label} با <b>Davarnet</b> همراهی، ممنون که هستی 💜`);
@@ -631,5 +639,5 @@ async function pollLoop() {
   }
 }
 
-console.log('Davarnet Telegram bot started (full feature set), polling...');
+console.log('Davarnet Telegram bot started (v2, full feature set), polling...');
 pollLoop();
