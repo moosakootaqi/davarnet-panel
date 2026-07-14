@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Davarnet - وضعیت اشتراک</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<link rel="stylesheet" href="/style.css" />
+<link rel="stylesheet" href="/sub.css" />
+</head>
+<body>
+
+<div class="bg-orbs">
+  <span class="orb orb1"></span>
+  <span class="orb orb2"></span>
+  <span class="orb orb3"></span>
+</div>
+
+<div id="toast-container"></div>
+
+<div class="sub-page">
+  <div class="sub-brand">
+    <div class="brand-logo">D</div>
+    <span>Davarnet</span>
+  </div>
+
+  <div id="loadingState" class="glass-card sub-card center-text">در حال بارگذاری...</div>
+
+  <div id="content" class="hidden">
+
+    <div class="glass-card sub-card sub-hero">
+      <div class="sub-hero-top">
+        <h1 id="configName">—</h1>
+        <span id="statusBadge" class="badge"></span>
+      </div>
+      <p id="configNote" class="muted-note"></p>
+    </div>
+
+    <div class="sub-grid">
+      <div class="glass-card sub-card">
+        <div class="sub-card-title">⏳ اعتبار زمانی</div>
+        <div id="expiryBig" class="sub-big-value">—</div>
+        <div class="progress-track"><div id="expiryBar" class="progress-fill"></div></div>
+        <div id="expiryDetail" class="muted-note"></div>
+      </div>
+
+      <div class="glass-card sub-card">
+        <div class="sub-card-title">📊 میزان مصرف</div>
+        <div id="trafficBig" class="sub-big-value">—</div>
+        <div class="muted-note">
+          <span id="uploadDetail"></span> &nbsp;|&nbsp; <span id="downloadDetail"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="glass-card sub-card">
+      <div class="sub-card-title">📶 تست پینگ سرور</div>
+      <div class="ping-row">
+        <div id="pingResult" class="sub-big-value ping-value">—</div>
+        <button id="pingBtn" class="btn primary small">تست کن</button>
+      </div>
+      <div class="muted-note">این تست از همین مرورگر تو انجام میشه، پس دقیق‌ترین معیار سرعت شخصی توئه.</div>
+    </div>
+
+    <div class="glass-card sub-card">
+      <div class="sub-card-title">🔗 لینک اشتراک (ساب)</div>
+      <div id="subLinkBox" class="client-link"></div>
+      <div class="sub-actions">
+        <button id="copyBtn" class="btn primary small">کپی لینک ساب</button>
+        <button id="qrBtn" class="btn ghost small">نمایش QR</button>
+      </div>
+      <div class="muted-note">این لینک رو تو اپ کلاینتت به‌عنوان Subscription اضافه کن؛ خودش آپدیت میشه.</div>
+    </div>
+
+    <div class="glass-card sub-card">
+      <div class="sub-card-title">📥 دانلود اپلیکیشن کلاینت</div>
+      <div class="app-links">
+        <a class="app-link" href="https://play.google.com/store/apps/details?id=com.v2ray.ang" target="_blank" rel="noopener">
+          <span class="app-icon">🤖</span>
+          <span>اندروید<br /><small>v2rayNG</small></span>
+        </a>
+        <a class="app-link" href="https://apps.apple.com/app/streisand/id6450534064" target="_blank" rel="noopener">
+          <span class="app-icon">🍎</span>
+          <span>iOS<br /><small>Streisand</small></span>
+        </a>
+        <a class="app-link" href="https://github.com/2dust/v2rayN/releases" target="_blank" rel="noopener">
+          <span class="app-icon">🖥️</span>
+          <span>ویندوز<br /><small>v2rayN</small></span>
+        </a>
+      </div>
+      <div class="muted-note">بعد از نصب: اپ رو باز کن → گزینه Import/Subscribe → لینک ساب بالا رو پیست کن.</div>
+    </div>
+  </div>
+
+  <div id="notFoundState" class="glass-card sub-card center-text hidden">
+    ❌ این کانفیگ پیدا نشد یا حذف شده.
+  </div>
+
+  <footer class="sub-footer">Davarnet</footer>
+</div>
+
+<!-- QR MODAL -->
+<div id="qrModal" class="modal-overlay hidden">
+  <div class="modal glass-card">
+    <button class="modal-close" id="qrModalClose">×</button>
+    <h3>QR لینک ساب</h3>
+    <div id="qrModalBody"></div>
+  </div>
+</div>
+
+<script src="/sub.js"></script>
+</body>
+</html>
